@@ -1,57 +1,65 @@
 import re
-import requests
+import subprocess
+import sys
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
-
-try:
-    from curl_cffi import requests as curl_requests
-    _CURL_AVAILABLE = True
-except ImportError:
-    _CURL_AVAILABLE = False
-
-# Fallback headers used only when curl_cffi is unavailable
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/125.0.0.0 Safari/537.36"
-    ),
-    "Accept-Language": "en-US,en;q=0.9",
-    "Accept-Encoding": "gzip, deflate, br",
-    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
-    "Connection": "keep-alive",
-    "Upgrade-Insecure-Requests": "1",
-    "Sec-Fetch-Dest": "document",
-    "Sec-Fetch-Mode": "navigate",
-    "Sec-Fetch-Site": "none",
-    "DNT": "1",
-}
+from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 
-def _fetch(url: str):
-    """Fetch URL impersonating Chrome TLS fingerprint to bypass bot detection."""
-    if _CURL_AVAILABLE:
-        return curl_requests.get(url, impersonate="chrome120", timeout=15)
-    return requests.get(url, headers=_HEADERS, timeout=12)
+def install_browser():
+    """Download Playwright's Chromium if not already present (runs once on cold start)."""
+    subprocess.run(
+        [sys.executable, "-m", "playwright", "install", "chromium"],
+        capture_output=True, check=False
+    )
 
 
 def _normalize_url(url: str) -> str:
-    """Strip query params and build a clean /dp/{ASIN} URL.
-
-    Wishlist/referral params (coliid, colid, ref_=...) require an authenticated
-    Amazon session — without one, Amazon returns 500. The ASIN in the path is
-    sufficient to identify the product.
-    """
+    """Strip session/referral query params, keep only /dp/{ASIN}."""
     parsed = urlparse(url)
     match = re.search(r"/dp/([A-Z0-9]{10})", parsed.path, re.IGNORECASE)
     if match:
         return f"{parsed.scheme}://{parsed.netloc}/dp/{match.group(1)}"
-    # No ASIN found — drop query string but keep path as-is
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
+
+def _get_page_html(url: str) -> str:
+    """Launch headless Chromium, load the page, wait for JS to render price/stock."""
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=True,
+            args=[
+                "--no-sandbox",
+                "--disable-dev-shm-usage",
+                "--disable-gpu",
+                "--disable-blink-features=AutomationControlled",
+            ],
+        )
+        context = browser.new_context(
+            viewport={"width": 1920, "height": 1080},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            locale="tr-TR",
+            timezone_id="Europe/Istanbul",
+        )
+        page = context.new_page()
+        # Hide webdriver flag so Amazon doesn't detect headless Chrome
+        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            # Wait until the product title is visible before capturing HTML
+            page.wait_for_selector("#productTitle", timeout=15_000)
+        except PWTimeout:
+            pass
+        html = page.content()
+        browser.close()
+        return html
+
+
 PRICE_CONTAINER_SELECTORS = [
-    # Scoped to known price containers + explicit xl/b size = main buybox price.
-    # Installment amounts use data-a-size='mini' and are excluded this way.
     "#corePrice_feature_div .a-price[data-a-size='xl']",
     "#corePrice_feature_div .a-price[data-a-size='b']",
     "#corePriceDisplay_desktop_feature_div .a-price[data-a-size='xl']",
@@ -61,10 +69,8 @@ PRICE_CONTAINER_SELECTORS = [
     "#desktop_qualifiedBuyBox .a-price[data-a-size='xl']",
     "#desktop_qualifiedBuyBox .a-price[data-a-size='b']",
     ".apex-pricetopay-value",
-    # Generic fallbacks — size-scoped to avoid installment rows
     ".a-price[data-a-size='xl']",
     ".a-price[data-a-size='b']",
-    # Legacy selectors
     "#priceblock_ourprice",
     "#priceblock_dealprice",
     "#price_inside_buybox",
@@ -81,28 +87,20 @@ STOCK_SELECTORS = [
 
 
 def _extract_price_and_currency(soup) -> tuple[float | None, str]:
-    """
-    Parse price from structured span components (a-price-whole / a-price-fraction /
-    a-price-symbol). Stripping all non-digits from the whole part makes this
-    locale-agnostic: "10.949" (TR) and "10,949" (US) both become "10949".
-    """
     for sel in PRICE_CONTAINER_SELECTORS:
         container = soup.select_one(sel)
         if not container:
             continue
-
         whole_el = container.select_one(".a-price-whole")
         fraction_el = container.select_one(".a-price-fraction")
         symbol_el = container.select_one(".a-price-symbol")
-
         if whole_el:
             whole = re.sub(r"[^\d]", "", whole_el.get_text())
             fraction = re.sub(r"[^\d]", "", fraction_el.get_text()) if fraction_el else "00"
             currency = symbol_el.get_text(strip=True) if symbol_el else ""
             if whole:
                 return float(f"{whole}.{fraction}"), currency
-
-        # Fallback: plain text element (legacy selectors like #priceblock_ourprice)
+        # Fallback: legacy plain-text price element
         text = container.get_text(strip=True)
         if text:
             currency = re.sub(r"[\d\s.,]", "", text).strip()
@@ -110,19 +108,17 @@ def _extract_price_and_currency(soup) -> tuple[float | None, str]:
             match = re.search(r"\d+\.?\d*", digits)
             if match:
                 return float(match.group()), currency
-
     return None, ""
 
 
 def scrape_product(url: str) -> dict:
     clean_url = _normalize_url(url)
     try:
-        resp = _fetch(clean_url)
-        resp.raise_for_status()
+        html = _get_page_html(clean_url)
     except Exception as e:
         return {"name": None, "price": None, "currency": "", "stock": None, "url": clean_url, "error": str(e)}
 
-    soup = BeautifulSoup(resp.text, "lxml")
+    soup = BeautifulSoup(html, "lxml")
 
     name_el = soup.select_one("#productTitle")
     name = name_el.get_text(strip=True) if name_el else None
@@ -136,6 +132,10 @@ def scrape_product(url: str) -> dict:
     stock = " ".join(stock_el.get_text().split()) if stock_el else "Unknown"
 
     if not name:
-        return {"name": None, "price": None, "currency": "", "stock": None, "url": clean_url, "error": "Could not parse product — Amazon may have blocked the request."}
+        return {
+            "name": None, "price": None, "currency": "", "stock": None,
+            "url": clean_url,
+            "error": "Could not parse product — page may have been blocked or shown a CAPTCHA.",
+        }
 
     return {"name": name, "price": price, "currency": currency, "stock": stock, "url": clean_url, "error": None}

@@ -6,6 +6,14 @@ from streamlit_autorefresh import st_autorefresh
 import scraper
 import storage
 
+# Install Playwright's Chromium once per container lifecycle.
+# On Streamlit Cloud this runs on cold start (~30-60 s download).
+@st.cache_resource
+def _setup_browser():
+    scraper.install_browser()
+
+_setup_browser()
+
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
 
 
