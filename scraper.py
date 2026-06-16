@@ -50,15 +50,33 @@ def _normalize_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
 PRICE_CONTAINER_SELECTORS = [
-    "#corePriceDisplay_desktop_feature_div .a-price",
+    # Scoped to known price containers + explicit xl/b size = main buybox price.
+    # Installment amounts use data-a-size='mini' and are excluded this way.
+    "#corePrice_feature_div .a-price[data-a-size='xl']",
+    "#corePrice_feature_div .a-price[data-a-size='b']",
+    "#corePriceDisplay_desktop_feature_div .a-price[data-a-size='xl']",
+    "#corePriceDisplay_desktop_feature_div .a-price[data-a-size='b']",
+    "#apex_offerDisplay_desktop .a-price[data-a-size='xl']",
+    "#apex_offerDisplay_desktop .a-price[data-a-size='b']",
+    "#desktop_qualifiedBuyBox .a-price[data-a-size='xl']",
+    "#desktop_qualifiedBuyBox .a-price[data-a-size='b']",
     ".apex-pricetopay-value",
+    # Generic fallbacks — size-scoped to avoid installment rows
     ".a-price[data-a-size='xl']",
     ".a-price[data-a-size='b']",
+    # Legacy selectors
     "#priceblock_ourprice",
     "#priceblock_dealprice",
     "#price_inside_buybox",
     "#kindle-price",
-    ".a-price",
+]
+
+STOCK_SELECTORS = [
+    "#availability .primary-availability-message",
+    "#availability .a-color-price",
+    "#merchantAvailability span",
+    "#availability span",
+    ".primary-availability-message",
 ]
 
 
@@ -111,8 +129,11 @@ def scrape_product(url: str) -> dict:
 
     price, currency = _extract_price_and_currency(soup)
 
-    stock_el = soup.select_one("#availability span")
-    stock = stock_el.get_text(strip=True) if stock_el else "Unknown"
+    stock_el = next(
+        (soup.select_one(sel) for sel in STOCK_SELECTORS if soup.select_one(sel)),
+        None
+    )
+    stock = " ".join(stock_el.get_text().split()) if stock_el else "Unknown"
 
     if not name:
         return {"name": None, "price": None, "currency": "", "stock": None, "url": clean_url, "error": "Could not parse product — Amazon may have blocked the request."}
