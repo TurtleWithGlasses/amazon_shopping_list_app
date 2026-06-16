@@ -1,0 +1,85 @@
+import re
+import requests
+from bs4 import BeautifulSoup
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Connection": "keep-alive",
+    "DNT": "1",
+}
+
+PRICE_CONTAINER_SELECTORS = [
+    "#corePriceDisplay_desktop_feature_div .a-price",
+    ".apex-pricetopay-value",
+    ".a-price[data-a-size='xl']",
+    ".a-price[data-a-size='b']",
+    "#priceblock_ourprice",
+    "#priceblock_dealprice",
+    "#price_inside_buybox",
+    "#kindle-price",
+    ".a-price",
+]
+
+
+def _extract_price_and_currency(soup) -> tuple[float | None, str]:
+    """
+    Parse price from structured span components (a-price-whole / a-price-fraction /
+    a-price-symbol). Stripping all non-digits from the whole part makes this
+    locale-agnostic: "10.949" (TR) and "10,949" (US) both become "10949".
+    """
+    for sel in PRICE_CONTAINER_SELECTORS:
+        container = soup.select_one(sel)
+        if not container:
+            continue
+
+        whole_el = container.select_one(".a-price-whole")
+        fraction_el = container.select_one(".a-price-fraction")
+        symbol_el = container.select_one(".a-price-symbol")
+
+        if whole_el:
+            whole = re.sub(r"[^\d]", "", whole_el.get_text())
+            fraction = re.sub(r"[^\d]", "", fraction_el.get_text()) if fraction_el else "00"
+            currency = symbol_el.get_text(strip=True) if symbol_el else ""
+            if whole:
+                return float(f"{whole}.{fraction}"), currency
+
+        # Fallback: plain text element (legacy selectors like #priceblock_ourprice)
+        text = container.get_text(strip=True)
+        if text:
+            currency = re.sub(r"[\d\s.,]", "", text).strip()
+            digits = re.sub(r"[^\d.]", "", text.replace(",", ""))
+            match = re.search(r"\d+\.?\d*", digits)
+            if match:
+                return float(match.group()), currency
+
+    return None, ""
+
+
+def scrape_product(url: str) -> dict:
+    try:
+        resp = requests.get(url, headers=HEADERS, timeout=12)
+        resp.raise_for_status()
+    except Exception as e:
+        return {"name": None, "price": None, "currency": "", "stock": None, "error": str(e)}
+
+    soup = BeautifulSoup(resp.text, "lxml")
+
+    name_el = soup.select_one("#productTitle")
+    name = name_el.get_text(strip=True) if name_el else None
+
+    price, currency = _extract_price_and_currency(soup)
+
+    stock_el = soup.select_one("#availability span")
+    stock = stock_el.get_text(strip=True) if stock_el else "Unknown"
+
+    if not name:
+        return {"name": None, "price": None, "currency": "", "stock": None, "error": "Could not parse product — Amazon may have blocked the request."}
+
+    return {"name": name, "price": price, "currency": currency, "stock": stock, "error": None}
