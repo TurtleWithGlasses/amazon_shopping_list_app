@@ -25,15 +25,18 @@ def _normalize_url(url: str) -> str:
 
 _CHROMIUM_ARGS = [
     "--no-sandbox",
-    "--disable-dev-shm-usage",   # use /tmp instead of /dev/shm (avoids OOM on small containers)
+    "--disable-dev-shm-usage",      # use /tmp instead of tiny /dev/shm on cloud containers
     "--disable-gpu",
-    "--single-process",          # run renderer in the browser process — cuts ~150 MB RAM
-    "--no-zygote",               # skip the zygote launcher process — saves another ~50 MB
     "--disable-setuid-sandbox",
-    "--disable-accelerated-2d-canvas",
-    "--disable-webgl",
+    "--disable-extensions",
+    "--disable-default-apps",
+    "--no-first-run",
     "--disable-blink-features=AutomationControlled",
 ]
+
+# Block resource types that are useless for scraping but consume significant memory.
+# Images alone account for 60-70% of a typical Amazon page's payload.
+_BLOCKED_TYPES = {"image", "stylesheet", "font", "media", "other"}
 
 
 def _launch_and_fetch(p, url: str) -> str:
@@ -49,25 +52,36 @@ def _launch_and_fetch(p, url: str) -> str:
         timezone_id="Europe/Istanbul",
     )
     page = context.new_page()
-    page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+
+    # Abort images / CSS / fonts — we only need HTML + JS for price & stock
+    page.route(
+        "**/*",
+        lambda route: route.abort()
+        if route.request.resource_type in _BLOCKED_TYPES
+        else route.continue_(),
+    )
+
+    page.add_init_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    )
     try:
         page.goto(url, wait_until="domcontentloaded", timeout=30_000)
         page.wait_for_selector("#productTitle", timeout=15_000)
     except PWTimeout:
         pass
+
     html = page.content()
     browser.close()
     return html
 
 
 def _get_page_html(url: str) -> str:
-    """Fetch the fully-rendered page HTML, retrying once if the browser crashes."""
+    """Fetch the fully-rendered page HTML, retrying once on failure."""
+    import time
     with sync_playwright() as p:
         try:
             return _launch_and_fetch(p, url)
         except Exception:
-            # Browser was likely killed by OOM — wait briefly and retry once
-            import time
             time.sleep(3)
             return _launch_and_fetch(p, url)
 
