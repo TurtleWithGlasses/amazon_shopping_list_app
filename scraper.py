@@ -19,6 +19,11 @@ def _normalize_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
 
+_TITLE_SELECTORS = ["#productTitle", "#title", "h1.a-size-large span", "#btAsinTitle"]
+# CSS selector that matches any known title element — used by WebDriverWait
+_TITLE_CSS = ", ".join(_TITLE_SELECTORS)
+
+
 def _build_driver() -> webdriver.Chrome:
     options = Options()
     options.add_argument("--headless=new")
@@ -30,29 +35,34 @@ def _build_driver() -> webdriver.Chrome:
     options.add_argument("--window-size=1280,800")
     options.add_argument("--blink-settings=imagesEnabled=false")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--lang=tr")  # tell Amazon to serve the Turkish page layout
     options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/125.0.0.0 Safari/537.36"
     )
-    # Use system Chromium installed via packages.txt — no runtime download needed
     options.binary_location = "/usr/bin/chromium"
     return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
 
 
 def _get_page_html(url: str) -> str:
+    import time
     driver = _build_driver()
     try:
+        driver.execute_cdp_cmd("Network.setExtraHTTPHeaders", {
+            "headers": {"Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"}
+        })
         driver.get(url)
         driver.execute_script(
             "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
         )
         try:
             WebDriverWait(driver, 20).until(
-                EC.presence_of_element_located((By.ID, "productTitle"))
+                EC.presence_of_element_located((By.CSS_SELECTOR, _TITLE_CSS))
             )
         except Exception:
             pass
+        time.sleep(2)  # let JS-rendered widgets (price, stock) finish rendering
         return driver.page_source
     finally:
         driver.quit()
@@ -132,7 +142,10 @@ def scrape_product(url: str) -> dict:
             return {"name": None, "price": None, "currency": "", "stock": None, "url": clean_url, "error": str(e)}
 
         soup = BeautifulSoup(html, "lxml")
-        name_el = soup.select_one("#productTitle")
+        name_el = next(
+            (soup.select_one(sel) for sel in _TITLE_SELECTORS if soup.select_one(sel)),
+            None,
+        )
         name = name_el.get_text(strip=True) if name_el else None
 
         if name:
