@@ -1,18 +1,13 @@
-import asyncio
 import re
-import subprocess
-import sys
-import threading
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
-
-def install_browser():
-    """Download Playwright's Chromium if not already present (runs once on cold start)."""
-    subprocess.run(
-        [sys.executable, "-m", "playwright", "install", "chromium"],
-        capture_output=True, check=False
-    )
+from selenium import webdriver
+from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.support.ui import WebDriverWait
 
 
 def _normalize_url(url: str) -> str:
@@ -24,83 +19,43 @@ def _normalize_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
 
-_CHROMIUM_ARGS = [
-    "--no-sandbox",
-    "--disable-dev-shm-usage",
-    "--disable-gpu",
-    "--disable-setuid-sandbox",
-    "--disable-extensions",
-    "--disable-default-apps",
-    "--no-first-run",
-    "--disable-blink-features=AutomationControlled",
-]
-
-_BLOCKED_TYPES = {"image", "stylesheet", "font", "media", "other"}
-
-
-async def _fetch_async(url: str) -> str:
-    """Async Playwright fetch — runs inside asyncio.run() so it owns a clean event loop."""
-    from playwright.async_api import async_playwright, TimeoutError as PWTimeout
-
-    async with async_playwright() as p:
-        browser = await p.chromium.launch(headless=True, args=_CHROMIUM_ARGS)
-        context = await browser.new_context(
-            viewport={"width": 1280, "height": 800},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
-            locale="tr-TR",
-            timezone_id="Europe/Istanbul",
-        )
-        page = await context.new_page()
-
-        async def _route_handler(route):
-            if route.request.resource_type in _BLOCKED_TYPES:
-                await route.abort()
-            else:
-                await route.continue_()
-
-        await page.route("**/*", _route_handler)
-        await page.add_init_script(
-            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-        )
-        try:
-            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            await page.wait_for_selector("#productTitle", timeout=15_000)
-        except PWTimeout:
-            pass
-
-        html = await page.content()
-        await browser.close()
-        return html
+def _build_driver() -> webdriver.Chrome:
+    options = Options()
+    options.add_argument("--headless=new")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--disable-extensions")
+    options.add_argument("--no-first-run")
+    options.add_argument("--window-size=1280,800")
+    options.add_argument("--blink-settings=imagesEnabled=false")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument(
+        "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    )
+    # Use system Chromium installed via packages.txt — no runtime download needed
+    options.binary_location = "/usr/bin/chromium"
+    return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
 
 
 def _get_page_html(url: str) -> str:
-    """Run the async fetch in a thread so asyncio.run() gets a guaranteed-clean event loop.
-
-    Playwright's sync_api is broken on Python 3.14 (asyncio internals changed).
-    asyncio.run() creates a fresh loop from scratch, avoiding all conflicts with
-    Streamlit's own event loop.
-    """
-    result: dict = {}
-
-    def _run():
+    driver = _build_driver()
+    try:
+        driver.get(url)
+        driver.execute_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
         try:
-            result["html"] = asyncio.run(_fetch_async(url))
-        except Exception as exc:
-            result["error"] = exc
-
-    t = threading.Thread(target=_run, daemon=True)
-    t.start()
-    t.join(timeout=60)
-
-    if t.is_alive():
-        raise TimeoutError("Browser timed out after 60 seconds")
-    if "error" in result:
-        raise result["error"]
-    return result.get("html", "")
+            WebDriverWait(driver, 20).until(
+                EC.presence_of_element_located((By.ID, "productTitle"))
+            )
+        except Exception:
+            pass
+        return driver.page_source
+    finally:
+        driver.quit()
 
 
 PRICE_CONTAINER_SELECTORS = [
@@ -144,7 +99,6 @@ def _extract_price_and_currency(soup) -> tuple[float | None, str]:
             currency = symbol_el.get_text(strip=True) if symbol_el else ""
             if whole:
                 return float(f"{whole}.{fraction}"), currency
-        # Fallback: legacy plain-text price element
         text = container.get_text(strip=True)
         if text:
             currency = re.sub(r"[\d\s.,]", "", text).strip()
@@ -171,7 +125,7 @@ def scrape_product(url: str) -> dict:
 
     stock_el = next(
         (soup.select_one(sel) for sel in STOCK_SELECTORS if soup.select_one(sel)),
-        None
+        None,
     )
     stock = " ".join(stock_el.get_text().split()) if stock_el else "Unknown"
 
