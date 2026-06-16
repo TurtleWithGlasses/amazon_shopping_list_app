@@ -3,7 +3,14 @@ import requests
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
-HEADERS = {
+try:
+    from curl_cffi import requests as curl_requests
+    _CURL_AVAILABLE = True
+except ImportError:
+    _CURL_AVAILABLE = False
+
+# Fallback headers used only when curl_cffi is unavailable
+_HEADERS = {
     "User-Agent": (
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
@@ -19,6 +26,13 @@ HEADERS = {
     "Sec-Fetch-Site": "none",
     "DNT": "1",
 }
+
+
+def _fetch(url: str):
+    """Fetch URL impersonating Chrome TLS fingerprint to bypass bot detection."""
+    if _CURL_AVAILABLE:
+        return curl_requests.get(url, impersonate="chrome120", timeout=15)
+    return requests.get(url, headers=_HEADERS, timeout=12)
 
 
 def _normalize_url(url: str) -> str:
@@ -85,7 +99,7 @@ def _extract_price_and_currency(soup) -> tuple[float | None, str]:
 def scrape_product(url: str) -> dict:
     clean_url = _normalize_url(url)
     try:
-        resp = requests.get(clean_url, headers=HEADERS, timeout=12)
+        resp = _fetch(clean_url)
         resp.raise_for_status()
     except Exception as e:
         return {"name": None, "price": None, "currency": "", "stock": None, "url": clean_url, "error": str(e)}
