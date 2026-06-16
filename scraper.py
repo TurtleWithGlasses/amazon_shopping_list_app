@@ -109,17 +109,44 @@ def _extract_price_and_currency(soup) -> tuple[float | None, str]:
     return None, ""
 
 
+def _classify_page(soup) -> str:
+    """Return a human-readable reason why the product title wasn't found."""
+    text = soup.get_text(" ", strip=True).lower()
+    if "captcha" in text or "robot" in text or "automated" in text:
+        return "Amazon showed a CAPTCHA / robot-check page. Try again in a few seconds."
+    if "sign in" in text and "password" in text:
+        return "Amazon redirected to a sign-in page — this product may require a logged-in session."
+    if "unavailable" in text or "page not found" in text or "doesn't exist" in text:
+        return "Product page not found — the URL may be incorrect or the listing removed."
+    return "Could not find product title. Amazon may have served a different page layout."
+
+
 def scrape_product(url: str) -> dict:
+    import time
     clean_url = _normalize_url(url)
-    try:
-        html = _get_page_html(clean_url)
-    except Exception as e:
-        return {"name": None, "price": None, "currency": "", "stock": None, "url": clean_url, "error": str(e)}
 
-    soup = BeautifulSoup(html, "lxml")
+    for attempt in range(2):
+        try:
+            html = _get_page_html(clean_url)
+        except Exception as e:
+            return {"name": None, "price": None, "currency": "", "stock": None, "url": clean_url, "error": str(e)}
 
-    name_el = soup.select_one("#productTitle")
-    name = name_el.get_text(strip=True) if name_el else None
+        soup = BeautifulSoup(html, "lxml")
+        name_el = soup.select_one("#productTitle")
+        name = name_el.get_text(strip=True) if name_el else None
+
+        if name:
+            break
+
+        if attempt == 0:
+            time.sleep(4)   # brief pause before retry
+
+    if not name:
+        return {
+            "name": None, "price": None, "currency": "", "stock": None,
+            "url": clean_url,
+            "error": _classify_page(soup),
+        }
 
     price, currency = _extract_price_and_currency(soup)
 
@@ -128,12 +155,5 @@ def scrape_product(url: str) -> dict:
         None,
     )
     stock = " ".join(stock_el.get_text().split()) if stock_el else "Unknown"
-
-    if not name:
-        return {
-            "name": None, "price": None, "currency": "", "stock": None,
-            "url": clean_url,
-            "error": "Could not parse product — page may have been blocked or shown a CAPTCHA.",
-        }
 
     return {"name": name, "price": price, "currency": currency, "stock": stock, "url": clean_url, "error": None}
