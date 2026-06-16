@@ -1,6 +1,7 @@
 import re
 import requests
 from bs4 import BeautifulSoup
+from urllib.parse import urlparse
 
 HEADERS = {
     "User-Agent": (
@@ -12,8 +13,27 @@ HEADERS = {
     "Accept-Encoding": "gzip, deflate, br",
     "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
     "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
     "DNT": "1",
 }
+
+
+def _normalize_url(url: str) -> str:
+    """Strip query params and build a clean /dp/{ASIN} URL.
+
+    Wishlist/referral params (coliid, colid, ref_=...) require an authenticated
+    Amazon session — without one, Amazon returns 500. The ASIN in the path is
+    sufficient to identify the product.
+    """
+    parsed = urlparse(url)
+    match = re.search(r"/dp/([A-Z0-9]{10})", parsed.path, re.IGNORECASE)
+    if match:
+        return f"{parsed.scheme}://{parsed.netloc}/dp/{match.group(1)}"
+    # No ASIN found — drop query string but keep path as-is
+    return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
 PRICE_CONTAINER_SELECTORS = [
     "#corePriceDisplay_desktop_feature_div .a-price",
@@ -63,11 +83,12 @@ def _extract_price_and_currency(soup) -> tuple[float | None, str]:
 
 
 def scrape_product(url: str) -> dict:
+    clean_url = _normalize_url(url)
     try:
-        resp = requests.get(url, headers=HEADERS, timeout=12)
+        resp = requests.get(clean_url, headers=HEADERS, timeout=12)
         resp.raise_for_status()
     except Exception as e:
-        return {"name": None, "price": None, "currency": "", "stock": None, "error": str(e)}
+        return {"name": None, "price": None, "currency": "", "stock": None, "url": clean_url, "error": str(e)}
 
     soup = BeautifulSoup(resp.text, "lxml")
 
@@ -80,6 +101,6 @@ def scrape_product(url: str) -> dict:
     stock = stock_el.get_text(strip=True) if stock_el else "Unknown"
 
     if not name:
-        return {"name": None, "price": None, "currency": "", "stock": None, "error": "Could not parse product — Amazon may have blocked the request."}
+        return {"name": None, "price": None, "currency": "", "stock": None, "url": clean_url, "error": "Could not parse product — Amazon may have blocked the request."}
 
-    return {"name": name, "price": price, "currency": currency, "stock": stock, "error": None}
+    return {"name": name, "price": price, "currency": currency, "stock": stock, "url": clean_url, "error": None}

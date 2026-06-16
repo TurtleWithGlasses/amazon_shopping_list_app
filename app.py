@@ -50,7 +50,7 @@ if submitted and url_input:
     if result["error"]:
         st.error(f"Could not fetch product: {result['error']}")
     else:
-        storage.add_product(url_input.strip(), result["name"], result["price"], result["currency"], result["stock"])
+        storage.add_product(result["url"], result["name"], result["price"], result["currency"], result["stock"])
         st.success(f"Added: {result['name']}")
         st.rerun()
 elif submitted and not url_input:
