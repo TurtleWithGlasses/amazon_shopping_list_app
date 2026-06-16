@@ -1,9 +1,10 @@
+import asyncio
 import re
 import subprocess
 import sys
+import threading
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
-from playwright.sync_api import sync_playwright, TimeoutError as PWTimeout
 
 
 def install_browser():
@@ -25,7 +26,7 @@ def _normalize_url(url: str) -> str:
 
 _CHROMIUM_ARGS = [
     "--no-sandbox",
-    "--disable-dev-shm-usage",      # use /tmp instead of tiny /dev/shm on cloud containers
+    "--disable-dev-shm-usage",
     "--disable-gpu",
     "--disable-setuid-sandbox",
     "--disable-extensions",
@@ -34,65 +35,68 @@ _CHROMIUM_ARGS = [
     "--disable-blink-features=AutomationControlled",
 ]
 
-# Block resource types that are useless for scraping but consume significant memory.
-# Images alone account for 60-70% of a typical Amazon page's payload.
 _BLOCKED_TYPES = {"image", "stylesheet", "font", "media", "other"}
 
 
-def _launch_and_fetch(p, url: str) -> str:
-    browser = p.chromium.launch(headless=True, args=_CHROMIUM_ARGS)
-    context = browser.new_context(
-        viewport={"width": 1280, "height": 800},
-        user_agent=(
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/125.0.0.0 Safari/537.36"
-        ),
-        locale="tr-TR",
-        timezone_id="Europe/Istanbul",
-    )
-    page = context.new_page()
+async def _fetch_async(url: str) -> str:
+    """Async Playwright fetch — runs inside asyncio.run() so it owns a clean event loop."""
+    from playwright.async_api import async_playwright, TimeoutError as PWTimeout
 
-    def _route_handler(route):
-        if route.request.resource_type in _BLOCKED_TYPES:
-            route.abort()
-        else:
-            route.continue_()
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=True, args=_CHROMIUM_ARGS)
+        context = await browser.new_context(
+            viewport={"width": 1280, "height": 800},
+            user_agent=(
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/125.0.0.0 Safari/537.36"
+            ),
+            locale="tr-TR",
+            timezone_id="Europe/Istanbul",
+        )
+        page = await context.new_page()
 
-    page.route("**/*", _route_handler)
+        async def _route_handler(route):
+            if route.request.resource_type in _BLOCKED_TYPES:
+                await route.abort()
+            else:
+                await route.continue_()
 
-    page.add_init_script(
-        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    )
-    try:
-        page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-        page.wait_for_selector("#productTitle", timeout=15_000)
-    except PWTimeout:
-        pass
+        await page.route("**/*", _route_handler)
+        await page.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+        )
+        try:
+            await page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+            await page.wait_for_selector("#productTitle", timeout=15_000)
+        except PWTimeout:
+            pass
 
-    html = page.content()
-    browser.close()
-    return html
+        html = await page.content()
+        await browser.close()
+        return html
 
 
 def _get_page_html(url: str) -> str:
-    """Run Playwright in an isolated thread to avoid asyncio conflicts with Streamlit."""
-    import threading
+    """Run the async fetch in a thread so asyncio.run() gets a guaranteed-clean event loop.
 
+    Playwright's sync_api is broken on Python 3.14 (asyncio internals changed).
+    asyncio.run() creates a fresh loop from scratch, avoiding all conflicts with
+    Streamlit's own event loop.
+    """
     result: dict = {}
 
     def _run():
         try:
-            with sync_playwright() as p:
-                result["html"] = _launch_and_fetch(p, url)
+            result["html"] = asyncio.run(_fetch_async(url))
         except Exception as exc:
             result["error"] = exc
 
-    thread = threading.Thread(target=_run, daemon=True)
-    thread.start()
-    thread.join(timeout=60)
+    t = threading.Thread(target=_run, daemon=True)
+    t.start()
+    t.join(timeout=60)
 
-    if thread.is_alive():
+    if t.is_alive():
         raise TimeoutError("Browser timed out after 60 seconds")
     if "error" in result:
         raise result["error"]
