@@ -23,40 +23,53 @@ def _normalize_url(url: str) -> str:
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
 
+_CHROMIUM_ARGS = [
+    "--no-sandbox",
+    "--disable-dev-shm-usage",   # use /tmp instead of /dev/shm (avoids OOM on small containers)
+    "--disable-gpu",
+    "--single-process",          # run renderer in the browser process — cuts ~150 MB RAM
+    "--no-zygote",               # skip the zygote launcher process — saves another ~50 MB
+    "--disable-setuid-sandbox",
+    "--disable-accelerated-2d-canvas",
+    "--disable-webgl",
+    "--disable-blink-features=AutomationControlled",
+]
+
+
+def _launch_and_fetch(p, url: str) -> str:
+    browser = p.chromium.launch(headless=True, args=_CHROMIUM_ARGS)
+    context = browser.new_context(
+        viewport={"width": 1280, "height": 800},
+        user_agent=(
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        ),
+        locale="tr-TR",
+        timezone_id="Europe/Istanbul",
+    )
+    page = context.new_page()
+    page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    try:
+        page.goto(url, wait_until="domcontentloaded", timeout=30_000)
+        page.wait_for_selector("#productTitle", timeout=15_000)
+    except PWTimeout:
+        pass
+    html = page.content()
+    browser.close()
+    return html
+
+
 def _get_page_html(url: str) -> str:
-    """Launch headless Chromium, load the page, wait for JS to render price/stock."""
+    """Fetch the fully-rendered page HTML, retrying once if the browser crashes."""
     with sync_playwright() as p:
-        browser = p.chromium.launch(
-            headless=True,
-            args=[
-                "--no-sandbox",
-                "--disable-dev-shm-usage",
-                "--disable-gpu",
-                "--disable-blink-features=AutomationControlled",
-            ],
-        )
-        context = browser.new_context(
-            viewport={"width": 1920, "height": 1080},
-            user_agent=(
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/125.0.0.0 Safari/537.36"
-            ),
-            locale="tr-TR",
-            timezone_id="Europe/Istanbul",
-        )
-        page = context.new_page()
-        # Hide webdriver flag so Amazon doesn't detect headless Chrome
-        page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
         try:
-            page.goto(url, wait_until="domcontentloaded", timeout=30_000)
-            # Wait until the product title is visible before capturing HTML
-            page.wait_for_selector("#productTitle", timeout=15_000)
-        except PWTimeout:
-            pass
-        html = page.content()
-        browser.close()
-        return html
+            return _launch_and_fetch(p, url)
+        except Exception:
+            # Browser was likely killed by OOM — wait briefly and retry once
+            import time
+            time.sleep(3)
+            return _launch_and_fetch(p, url)
 
 
 PRICE_CONTAINER_SELECTORS = [
