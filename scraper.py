@@ -53,13 +53,13 @@ def _launch_and_fetch(p, url: str) -> str:
     )
     page = context.new_page()
 
-    # Abort images / CSS / fonts — we only need HTML + JS for price & stock
-    page.route(
-        "**/*",
-        lambda route: route.abort()
-        if route.request.resource_type in _BLOCKED_TYPES
-        else route.continue_(),
-    )
+    def _route_handler(route):
+        if route.request.resource_type in _BLOCKED_TYPES:
+            route.abort()
+        else:
+            route.continue_()
+
+    page.route("**/*", _route_handler)
 
     page.add_init_script(
         "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
@@ -76,14 +76,27 @@ def _launch_and_fetch(p, url: str) -> str:
 
 
 def _get_page_html(url: str) -> str:
-    """Fetch the fully-rendered page HTML, retrying once on failure."""
-    import time
-    with sync_playwright() as p:
+    """Run Playwright in an isolated thread to avoid asyncio conflicts with Streamlit."""
+    import threading
+
+    result: dict = {}
+
+    def _run():
         try:
-            return _launch_and_fetch(p, url)
-        except Exception:
-            time.sleep(3)
-            return _launch_and_fetch(p, url)
+            with sync_playwright() as p:
+                result["html"] = _launch_and_fetch(p, url)
+        except Exception as exc:
+            result["error"] = exc
+
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(timeout=60)
+
+    if thread.is_alive():
+        raise TimeoutError("Browser timed out after 60 seconds")
+    if "error" in result:
+        raise result["error"]
+    return result.get("html", "")
 
 
 PRICE_CONTAINER_SELECTORS = [
