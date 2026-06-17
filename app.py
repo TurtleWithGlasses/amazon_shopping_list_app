@@ -8,16 +8,10 @@ from streamlit_autorefresh import st_autorefresh
 import scraper
 import storage
 
-# Suppress Windows asyncio pipe-cleanup noise from Selenium's chromedriver subprocess
+# On Windows, ProactorEventLoop throws WinError 10054 when Selenium's chromedriver
+# subprocess closes its pipe. Switch to SelectorEventLoop which avoids this entirely.
 if sys.platform == "win32":
-    def _suppress_connection_reset(loop, context):
-        if isinstance(context.get("exception"), ConnectionResetError):
-            return
-        loop.default_exception_handler(context)
-    try:
-        asyncio.get_event_loop().set_exception_handler(_suppress_connection_reset)
-    except RuntimeError:
-        pass
+    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
 
 
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
