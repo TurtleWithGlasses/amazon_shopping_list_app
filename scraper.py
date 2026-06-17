@@ -1,5 +1,7 @@
 import re
 import sys
+import shutil
+import tempfile
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
@@ -13,7 +15,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 def _normalize_url(url: str) -> str:
     parsed = urlparse(url)
-    # Match /dp/ASIN or /gp/product/ASIN — both are valid Amazon product URL forms
     match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", parsed.path, re.IGNORECASE)
     if match:
         return f"{parsed.scheme}://{parsed.netloc}/dp/{match.group(1)}"
@@ -21,12 +22,35 @@ def _normalize_url(url: str) -> str:
 
 
 _TITLE_SELECTORS = ["#productTitle", "#title", "h1.a-size-large span", "#btAsinTitle"]
-# CSS selector that matches any known title element — used by WebDriverWait
 _TITLE_CSS = ", ".join(_TITLE_SELECTORS)
 
+_REQUEST_HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/125.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7",
+    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8",
+    "Accept-Encoding": "gzip, deflate, br",
+    "Connection": "keep-alive",
+    "Upgrade-Insecure-Requests": "1",
+}
 
-def _build_driver() -> webdriver.Chrome:
-    import os, tempfile
+
+def _fetch_with_requests(url: str) -> str | None:
+    """Fast HTTP fetch — works on residential IPs, no browser needed."""
+    import requests
+    try:
+        resp = requests.get(url, headers=_REQUEST_HEADERS, timeout=20)
+        if resp.status_code == 200:
+            return resp.text
+    except Exception:
+        pass
+    return None
+
+
+def _build_selenium_driver() -> webdriver.Chrome:
     options = Options()
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
@@ -40,25 +64,45 @@ def _build_driver() -> webdriver.Chrome:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/125.0.0.0 Safari/537.36"
     )
-    # Isolated profile dir avoids conflicts with any already-running Chrome instance
-    _tmp = os.path.join(tempfile.gettempdir(), "amazon_tracker_chrome")
-    os.makedirs(_tmp, exist_ok=True)
-    options.add_argument(f"--user-data-dir={_tmp}")
-
     if sys.platform.startswith("linux"):
         options.add_argument("--disable-dev-shm-usage")
         options.add_argument("--no-first-run")
         options.add_argument("--blink-settings=imagesEnabled=false")
         options.binary_location = "/usr/bin/chromium"
         return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
-
     return webdriver.Chrome(options=options)
 
 
-def _get_page_html(url: str) -> str:
+def _fetch_with_selenium(url: str) -> str:
+    """Headless browser fetch — handles JS-rendered content."""
     import time
-    driver = _build_driver()
+    tmpdir = tempfile.mkdtemp(prefix="amzn_tracker_")
+    driver = None
     try:
+        # Fresh isolated profile every call — no stale lock files
+        options = Options()
+        options.add_argument("--headless=new")
+        options.add_argument("--disable-gpu")
+        options.add_argument("--no-sandbox")
+        options.add_argument("--disable-extensions")
+        options.add_argument("--window-size=1280,800")
+        options.add_argument("--disable-blink-features=AutomationControlled")
+        options.add_argument("--lang=tr")
+        options.add_argument(f"--user-data-dir={tmpdir}")
+        options.add_argument(
+            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/125.0.0.0 Safari/537.36"
+        )
+        if sys.platform.startswith("linux"):
+            options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--no-first-run")
+            options.add_argument("--blink-settings=imagesEnabled=false")
+            options.binary_location = "/usr/bin/chromium"
+            driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
+        else:
+            driver = webdriver.Chrome(options=options)
+
         driver.execute_cdp_cmd("Network.setExtraHTTPHeaders", {
             "headers": {"Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"}
         })
@@ -72,16 +116,29 @@ def _get_page_html(url: str) -> str:
             )
         except Exception:
             pass
-        time.sleep(2)  # let JS-rendered widgets (price, stock) finish rendering
+        time.sleep(2)
         return driver.page_source
     finally:
-        driver.quit()
+        if driver:
+            driver.quit()
+        shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+def _get_page_html(url: str) -> str:
+    """
+    On Windows/macOS: try a plain HTTP request first (no Chrome, no crashes).
+    Fall back to Selenium if the static HTML doesn't contain price data.
+    On Linux (Streamlit Cloud): go straight to Selenium.
+    """
+    if not sys.platform.startswith("linux"):
+        html = _fetch_with_requests(url)
+        if html and "a-price-whole" in html:
+            return html
+    return _fetch_with_selenium(url)
 
 
 PRICE_CONTAINER_SELECTORS = [
-    # "price to pay" widget — the actual checkout price, highest priority
     ".apex-pricetopay-value",
-    # Core price containers (all three size variants Amazon uses)
     "#corePrice_feature_div .a-price[data-a-size='xl']",
     "#corePrice_feature_div .a-price[data-a-size='b']",
     "#corePrice_feature_div .a-price[data-a-size='l']",
@@ -94,7 +151,6 @@ PRICE_CONTAINER_SELECTORS = [
     "#desktop_qualifiedBuyBox .a-price[data-a-size='xl']",
     "#desktop_qualifiedBuyBox .a-price[data-a-size='b']",
     "#desktop_qualifiedBuyBox .a-price[data-a-size='l']",
-    # Broad fallbacks
     ".a-price[data-a-size='xl']",
     ".a-price[data-a-size='b']",
     ".a-price[data-a-size='l']",
@@ -138,7 +194,6 @@ def _extract_price_and_currency(soup) -> tuple[float | None, str]:
 
 
 def _classify_page(soup) -> str:
-    """Return a human-readable reason why the product title wasn't found."""
     text = soup.get_text(" ", strip=True).lower()
     if "captcha" in text or "robot" in text or "automated" in text:
         return "Amazon showed a CAPTCHA / robot-check page. Try again in a few seconds."
@@ -170,7 +225,7 @@ def scrape_product(url: str) -> dict:
             break
 
         if attempt == 0:
-            time.sleep(4)   # brief pause before retry
+            time.sleep(4)
 
     if not name:
         return {
