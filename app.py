@@ -9,9 +9,17 @@ import scraper
 import storage
 
 # On Windows, ProactorEventLoop throws WinError 10054 when Selenium's chromedriver
-# subprocess closes its pipe. Switch to SelectorEventLoop which avoids this entirely.
+# closes its pipe. The policy fix is too late here (Streamlit already owns the loop),
+# so patch the exact method that raises the error instead.
 if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+    import asyncio.proactor_events as _pe
+    _orig_ccl = _pe._ProactorBasePipeTransport._call_connection_lost
+    def _patched_ccl(self, exc):
+        try:
+            _orig_ccl(self, exc)
+        except ConnectionResetError:
+            pass
+    _pe._ProactorBasePipeTransport._call_connection_lost = _patched_ccl
 
 
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
