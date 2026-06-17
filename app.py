@@ -1,3 +1,5 @@
+import asyncio
+import sys
 from datetime import datetime
 
 import streamlit as st
@@ -5,6 +7,17 @@ from streamlit_autorefresh import st_autorefresh
 
 import scraper
 import storage
+
+# Suppress Windows asyncio pipe-cleanup noise from Selenium's chromedriver subprocess
+if sys.platform == "win32":
+    def _suppress_connection_reset(loop, context):
+        if isinstance(context.get("exception"), ConnectionResetError):
+            return
+        loop.default_exception_handler(context)
+    try:
+        asyncio.get_event_loop().set_exception_handler(_suppress_connection_reset)
+    except RuntimeError:
+        pass
 
 
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
