@@ -1,4 +1,5 @@
 import re
+import sys
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
@@ -35,14 +36,18 @@ def _build_driver() -> webdriver.Chrome:
     options.add_argument("--window-size=1280,800")
     options.add_argument("--blink-settings=imagesEnabled=false")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--lang=tr")  # tell Amazon to serve the Turkish page layout
+    options.add_argument("--lang=tr")
     options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/125.0.0.0 Safari/537.36"
     )
-    options.binary_location = "/usr/bin/chromium"
-    return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
+    if sys.platform.startswith("linux"):
+        # Streamlit Cloud / Linux: use system Chromium installed via packages.txt
+        options.binary_location = "/usr/bin/chromium"
+        return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
+    # Windows / macOS: Selenium Manager auto-locates the installed Chrome and driver
+    return webdriver.Chrome(options=options)
 
 
 def _get_page_html(url: str) -> str:
