@@ -11,9 +11,9 @@ from selenium.webdriver.support.ui import WebDriverWait
 
 
 def _normalize_url(url: str) -> str:
-    """Strip session/referral query params, keep only /dp/{ASIN}."""
     parsed = urlparse(url)
-    match = re.search(r"/dp/([A-Z0-9]{10})", parsed.path, re.IGNORECASE)
+    # Match /dp/ASIN or /gp/product/ASIN — both are valid Amazon product URL forms
+    match = re.search(r"/(?:dp|gp/product)/([A-Z0-9]{10})", parsed.path, re.IGNORECASE)
     if match:
         return f"{parsed.scheme}://{parsed.netloc}/dp/{match.group(1)}"
     return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
@@ -69,17 +69,25 @@ def _get_page_html(url: str) -> str:
 
 
 PRICE_CONTAINER_SELECTORS = [
+    # "price to pay" widget — the actual checkout price, highest priority
+    ".apex-pricetopay-value",
+    # Core price containers (all three size variants Amazon uses)
     "#corePrice_feature_div .a-price[data-a-size='xl']",
     "#corePrice_feature_div .a-price[data-a-size='b']",
+    "#corePrice_feature_div .a-price[data-a-size='l']",
     "#corePriceDisplay_desktop_feature_div .a-price[data-a-size='xl']",
     "#corePriceDisplay_desktop_feature_div .a-price[data-a-size='b']",
+    "#corePriceDisplay_desktop_feature_div .a-price[data-a-size='l']",
     "#apex_offerDisplay_desktop .a-price[data-a-size='xl']",
     "#apex_offerDisplay_desktop .a-price[data-a-size='b']",
+    "#apex_offerDisplay_desktop .a-price[data-a-size='l']",
     "#desktop_qualifiedBuyBox .a-price[data-a-size='xl']",
     "#desktop_qualifiedBuyBox .a-price[data-a-size='b']",
-    ".apex-pricetopay-value",
+    "#desktop_qualifiedBuyBox .a-price[data-a-size='l']",
+    # Broad fallbacks
     ".a-price[data-a-size='xl']",
     ".a-price[data-a-size='b']",
+    ".a-price[data-a-size='l']",
     "#priceblock_ourprice",
     "#priceblock_dealprice",
     "#price_inside_buybox",
