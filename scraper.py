@@ -79,11 +79,8 @@ def _fetch_with_selenium(url: str) -> str:
     tmpdir = tempfile.mkdtemp(prefix="amzn_tracker_")
     driver = None
     try:
-        # Fresh isolated profile every call — no stale lock files
         options = Options()
-        options.add_argument("--headless=new")
         options.add_argument("--disable-gpu")
-        options.add_argument("--no-sandbox")
         options.add_argument("--disable-extensions")
         options.add_argument("--window-size=1280,800")
         options.add_argument("--disable-blink-features=AutomationControlled")
@@ -95,12 +92,17 @@ def _fetch_with_selenium(url: str) -> str:
             "Chrome/125.0.0.0 Safari/537.36"
         )
         if sys.platform.startswith("linux"):
+            options.add_argument("--headless=new")
+            options.add_argument("--no-sandbox")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--no-first-run")
             options.add_argument("--blink-settings=imagesEnabled=false")
             options.binary_location = "/usr/bin/chromium"
             driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
         else:
+            # --headless (without =new) is more stable on regular Windows Chrome
+            # --no-sandbox is a Linux container flag; omit it for regular Chrome
+            options.add_argument("--headless")
             driver = webdriver.Chrome(options=options)
 
         driver.execute_cdp_cmd("Network.setExtraHTTPHeaders", {
@@ -127,13 +129,20 @@ def _fetch_with_selenium(url: str) -> str:
 def _get_page_html(url: str) -> str:
     """
     On Windows/macOS: try a plain HTTP request first (no Chrome, no crashes).
-    Fall back to Selenium if the static HTML doesn't contain price data.
+    If price is absent from static HTML, attempt Selenium for JS rendering.
+    If Selenium also fails, return the static HTML anyway (price shows N/A,
+    but name/stock are preserved — better than a crash error).
     On Linux (Streamlit Cloud): go straight to Selenium.
     """
     if not sys.platform.startswith("linux"):
         html = _fetch_with_requests(url)
-        if html and "a-price-whole" in html:
-            return html
+        if html:
+            if "a-price-whole" in html:
+                return html          # price is in static HTML, no browser needed
+            try:
+                return _fetch_with_selenium(url)
+            except Exception:
+                return html          # Selenium crashed; return static HTML (N/A price)
     return _fetch_with_selenium(url)
 
 
