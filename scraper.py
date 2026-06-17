@@ -1,7 +1,5 @@
 import re
 import sys
-import shutil
-import tempfile
 from bs4 import BeautifulSoup
 from urllib.parse import urlparse
 
@@ -50,61 +48,55 @@ def _fetch_with_requests(url: str) -> str | None:
     return None
 
 
-def _build_selenium_driver() -> webdriver.Chrome:
+def _fetch_with_selenium(url: str) -> str:
+    """Headless browser fetch — renders the JS-driven buy box (price + stock)."""
+    import time
     options = Options()
+    # Standard, stable config. NOTE: no --user-data-dir — Selenium creates its own
+    # isolated temp profile automatically; forcing a custom dir is a known cause of
+    # the "DevToolsActivePort file doesn't exist" startup crash on Windows.
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
     options.add_argument("--disable-extensions")
     options.add_argument("--window-size=1280,800")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--no-first-run")
+    options.add_argument("--no-default-browser-check")
+    options.add_argument("--remote-allow-origins=*")
     options.add_argument("--lang=tr")
     options.add_argument(
         "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/125.0.0.0 Safari/537.36"
     )
+
     if sys.platform.startswith("linux"):
+        # Streamlit Cloud / Docker: system Chromium + container-only flags
+        options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--no-first-run")
         options.add_argument("--blink-settings=imagesEnabled=false")
         options.binary_location = "/usr/bin/chromium"
-        return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
-    return webdriver.Chrome(options=options)
+        service = Service("/usr/bin/chromedriver")
+    else:
+        # Windows / macOS: Selenium Manager locates Chrome + chromedriver
+        service = None
 
-
-def _fetch_with_selenium(url: str) -> str:
-    """Headless browser fetch — handles JS-rendered content."""
-    import time
-    tmpdir = tempfile.mkdtemp(prefix="amzn_tracker_")
+    # Chrome occasionally fails to start ("DevToolsActivePort file doesn't exist")
+    # on the first try — retry a couple of times before giving up.
     driver = None
-    try:
-        options = Options()
-        options.add_argument("--disable-gpu")
-        options.add_argument("--disable-extensions")
-        options.add_argument("--window-size=1280,800")
-        options.add_argument("--disable-blink-features=AutomationControlled")
-        options.add_argument("--lang=tr")
-        options.add_argument(f"--user-data-dir={tmpdir}")
-        options.add_argument(
-            "--user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/125.0.0.0 Safari/537.36"
-        )
-        if sys.platform.startswith("linux"):
-            options.add_argument("--headless=new")
-            options.add_argument("--no-sandbox")
-            options.add_argument("--disable-dev-shm-usage")
-            options.add_argument("--no-first-run")
-            options.add_argument("--blink-settings=imagesEnabled=false")
-            options.binary_location = "/usr/bin/chromium"
-            driver = webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
-        else:
-            # --headless (without =new) is more stable on regular Windows Chrome
-            # --no-sandbox is a Linux container flag; omit it for regular Chrome
-            options.add_argument("--headless")
-            driver = webdriver.Chrome(options=options)
+    last_err = None
+    for _ in range(3):
+        try:
+            driver = (webdriver.Chrome(service=service, options=options)
+                      if service else webdriver.Chrome(options=options))
+            break
+        except Exception as e:
+            last_err = e
+            time.sleep(1.5)
+    if driver is None:
+        raise last_err
 
+    try:
         driver.execute_cdp_cmd("Network.setExtraHTTPHeaders", {
             "headers": {"Accept-Language": "tr-TR,tr;q=0.9,en-US;q=0.8,en;q=0.7"}
         })
@@ -118,32 +110,28 @@ def _fetch_with_selenium(url: str) -> str:
             )
         except Exception:
             pass
-        time.sleep(2)
+        time.sleep(2)  # let the price/stock widgets finish rendering
         return driver.page_source
     finally:
-        if driver:
-            driver.quit()
-        shutil.rmtree(tmpdir, ignore_errors=True)
+        driver.quit()
 
 
 def _get_page_html(url: str) -> str:
     """
-    On Windows/macOS: try a plain HTTP request first (no Chrome, no crashes).
-    If price is absent from static HTML, attempt Selenium for JS rendering.
-    If Selenium also fails, return the static HTML anyway (price shows N/A,
-    but name/stock are preserved — better than a crash error).
-    On Linux (Streamlit Cloud): go straight to Selenium.
+    Selenium is primary on every platform — only a real browser renders the
+    JS buy box, which is the *only* reliable source of the displayed price and
+    stock. On Windows, if Chrome fails to start, degrade to a plain HTTP request
+    (returns the product name, but price/stock may be missing) rather than error.
     """
-    if not sys.platform.startswith("linux"):
+    if sys.platform.startswith("linux"):
+        return _fetch_with_selenium(url)
+    try:
+        return _fetch_with_selenium(url)
+    except Exception:
         html = _fetch_with_requests(url)
         if html:
-            if "a-price-whole" in html:
-                return html          # price is in static HTML, no browser needed
-            try:
-                return _fetch_with_selenium(url)
-            except Exception:
-                return html          # Selenium crashed; return static HTML (N/A price)
-    return _fetch_with_selenium(url)
+            return html
+        raise
 
 
 PRICE_CONTAINER_SELECTORS = [
