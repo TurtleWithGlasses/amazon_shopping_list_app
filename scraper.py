@@ -26,10 +26,12 @@ _TITLE_CSS = ", ".join(_TITLE_SELECTORS)
 
 
 def _build_driver() -> webdriver.Chrome:
+    import os, tempfile
     options = Options()
-    # Flags that work safely on all platforms
     options.add_argument("--headless=new")
     options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-extensions")
     options.add_argument("--window-size=1280,800")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--lang=tr")
@@ -38,18 +40,18 @@ def _build_driver() -> webdriver.Chrome:
         "AppleWebKit/537.36 (KHTML, like Gecko) "
         "Chrome/125.0.0.0 Safari/537.36"
     )
+    # Isolated profile dir avoids conflicts with any already-running Chrome instance
+    _tmp = os.path.join(tempfile.gettempdir(), "amazon_tracker_chrome")
+    os.makedirs(_tmp, exist_ok=True)
+    options.add_argument(f"--user-data-dir={_tmp}")
 
     if sys.platform.startswith("linux"):
-        # Linux container flags (Streamlit Cloud / Docker) — crash Chrome on Windows
-        options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--disable-extensions")
         options.add_argument("--no-first-run")
         options.add_argument("--blink-settings=imagesEnabled=false")
         options.binary_location = "/usr/bin/chromium"
         return webdriver.Chrome(service=Service("/usr/bin/chromedriver"), options=options)
 
-    # Windows / macOS: Selenium Manager finds the installed Chrome automatically
     return webdriver.Chrome(options=options)
 
 
