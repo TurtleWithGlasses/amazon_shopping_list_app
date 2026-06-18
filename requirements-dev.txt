@@ -1,0 +1,4 @@
+# ===== Build / development tools (not needed at runtime) =====
+-r requirements.txt
+
+pyinstaller>=6.0          # bundle the app into a standalone Windows .exe

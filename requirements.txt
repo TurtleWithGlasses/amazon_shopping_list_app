@@ -1,6 +1,17 @@
-streamlit>=1.35.0
-selenium>=4.20.0
-beautifulsoup4>=4.12.0
-lxml>=5.2.0
-streamlit-autorefresh>=1.0.1
-pandas>=2.0.0
+# ===== Price Tracker — Desktop App (runtime dependencies) =====
+# Build-time tools live in requirements-dev.txt.
+
+# --- Scraping (reused from the current app) ---
+selenium>=4.20.0          # headless browser for JS-rendered price/stock
+beautifulsoup4>=4.12.0    # HTML parsing
+lxml>=5.2.0               # fast parser backend for BeautifulSoup
+requests>=2.31.0          # lightweight fetch / fallback when Chrome is unavailable
+
+# --- Desktop UI (replaces Streamlit) ---
+PySide6>=6.7.0            # native Qt desktop GUI
+pyqtgraph>=0.13.0         # fast, interactive price-history charts
+
+# --- Data, storage & export ---
+SQLAlchemy>=2.0.0         # ORM over SQLite now, swappable to Postgres later
+pandas>=2.0.0             # timescale filtering/resampling + CSV/Excel export
+openpyxl>=3.1.0           # Excel (.xlsx) writer used by pandas.to_excel

@@ -4,3 +4,19 @@ __pycache__/
 .qodo/
 products.json
 .env
+
+# Build artifacts (PyInstaller / installer)
+build/
+dist/
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Streamlit (legacy) secrets
+.streamlit/secrets.toml
+
+# IDE
+.vscode/
+.idea/
