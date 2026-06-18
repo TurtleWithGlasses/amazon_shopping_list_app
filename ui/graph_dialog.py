@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core import repository as repo
+from core import datastore as repo
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS, since_for
 
 

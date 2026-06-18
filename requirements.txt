@@ -12,6 +12,9 @@ PySide6>=6.7.0            # native Qt desktop GUI
 pyqtgraph>=0.13.0         # fast, interactive price-history charts
 
 # --- Data, storage & export ---
-SQLAlchemy>=2.0.0         # ORM over SQLite now, swappable to Postgres later
+SQLAlchemy>=2.0.0         # ORM over SQLite (local cache), swappable to Postgres
 pandas>=2.0.0             # timescale filtering/resampling + CSV/Excel export
 openpyxl>=3.1.0           # Excel (.xlsx) writer used by pandas.to_excel
+
+# --- Accounts & cloud sync (Phase 6) ---
+supabase>=2.0.0           # Supabase Auth (email confirmation) + Postgres data

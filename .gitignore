@@ -20,3 +20,6 @@ dist/
 # IDE
 .vscode/
 .idea/
+
+# Local secrets (Supabase keys etc.)
+config.local.json

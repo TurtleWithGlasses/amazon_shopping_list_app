@@ -3,7 +3,7 @@ from typing import Optional
 
 import pandas as pd
 
-from core import repository as repo
+from core import datastore as repo
 from .timescales import since_for
 
 _COLUMNS = ["product", "retailer", "url", "captured_at", "price", "currency", "stock"]

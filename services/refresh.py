@@ -4,12 +4,11 @@ Used by the manual "Refresh All" button now, and by the Phase 4 scheduler later.
 """
 from typing import Optional
 
-from core import repository as repo
-from core.models import Product
+from core import datastore as repo
 from core.scraping import ProductData
 
 
-def apply_and_snapshot(product_id: int, data: ProductData) -> Optional[Product]:
+def apply_and_snapshot(product_id: int, data: ProductData) -> Optional[object]:
     """Update latest price/stock (+ change flags) and append a history point."""
     if not data.ok:
         return None

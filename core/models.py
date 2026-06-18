@@ -40,6 +40,8 @@ class Product(Base):
     price_changed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     stock_changed: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
 
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     last_checked: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

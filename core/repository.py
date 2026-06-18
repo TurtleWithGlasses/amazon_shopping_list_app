@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Optional
 from urllib.parse import urlparse
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 from .db import session_scope
 from .models import PriceHistory, Product, utcnow
@@ -34,6 +34,7 @@ def add_product(
 ) -> Product:
     """Insert a product and seed its first price-history row if we already have data."""
     with session_scope() as session:
+        next_position = (session.scalar(select(func.max(Product.position))) or 0) + 1
         product = Product(
             url=url,
             name=name,
@@ -42,6 +43,7 @@ def add_product(
             last_price=price,
             last_stock=stock,
             user_id=user_id,
+            position=next_position,
             last_checked=utcnow() if (price is not None or stock is not None) else None,
         )
         session.add(product)
@@ -55,10 +57,19 @@ def add_product(
 
 def list_products(user_id: Optional[int] = None) -> List[Product]:
     with session_scope() as session:
-        stmt = select(Product).order_by(Product.created_at)
+        stmt = select(Product).order_by(Product.position, Product.created_at)
         if user_id is not None:
             stmt = stmt.where(Product.user_id == user_id)
         return list(session.scalars(stmt))
+
+
+def reorder_products(ordered_ids: List[int]) -> None:
+    """Persist a new manual order: position = index in the given id list."""
+    with session_scope() as session:
+        for index, product_id in enumerate(ordered_ids):
+            product = session.get(Product, product_id)
+            if product is not None:
+                product.position = index
 
 
 def get_product(product_id: int) -> Optional[Product]:

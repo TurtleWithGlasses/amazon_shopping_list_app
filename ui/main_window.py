@@ -2,14 +2,16 @@
 import os
 from functools import partial
 
-from PySide6.QtCore import Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QInputDialog,
+    QLabel,
     QLineEdit,
     QMainWindow,
     QMenu,
@@ -23,7 +25,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from core import repository as repo
+from core import datastore as repo
+from core.cloud import auth
 from services import export as export_service
 from services.scrape_worker import ScrapeTask
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
@@ -33,7 +36,7 @@ from ui.graph_dialog import GraphDialog
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
 _CHANGED_COLOR = QColor("#e8830c")  # orange for changed price/stock
 
-COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED, COL_ACTIONS = range(5)
+COL_MOVE, COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED, COL_ACTIONS = range(6)
 
 # Timer intervals (overridable via env vars for testing).
 REFRESH_INTERVAL_MS = int(os.environ.get("PRICETRACKER_REFRESH_MS", 5 * 60 * 1000))      # 5 min
@@ -64,10 +67,12 @@ class MainWindow(QMainWindow):
         self._refresh_snapshot = False
         self._refresh_notify = False
         self._refresh_changes = []
+        self._settings = QSettings()
 
         self._build_menu()
         self._build_central()
         self._build_tray()
+        self._restore_layout()
         self.reload()
         self._start_timers()
 
@@ -93,6 +98,13 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
 
+        # Signed-in user banner
+        name = auth.current_display_name()
+        self.user_label = QLabel(f"Signed in as {name}" if name else "")
+        self.user_label.setStyleSheet("color: #555; padding: 2px 0;")
+        self.user_label.setVisible(bool(name))
+        layout.addWidget(self.user_label)
+
         # Add bar
         add_bar = QHBoxLayout()
         self.url_input = QLineEdit()
@@ -108,21 +120,36 @@ class MainWindow(QMainWindow):
         layout.addLayout(add_bar)
 
         # Table
-        self.table = QTableWidget(0, 5)
+        self.table = QTableWidget(0, 6)
         self.table.setHorizontalHeaderLabels(
-            ["Product", "Price", "Stock", "Last checked", "Actions"]
+            ["", "Product", "Price", "Stock", "Last checked", "Actions"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
+
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(COL_NAME, QHeaderView.ResizeMode.Stretch)
-        for col in (COL_PRICE, COL_STOCK, COL_CHECKED, COL_ACTIONS):
-            header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
+        # All columns user-resizable; saved widths are restored in _restore_layout.
+        for col in range(6):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+        for col, width in (
+            (COL_MOVE, 64), (COL_NAME, 340), (COL_PRICE, 110),
+            (COL_STOCK, 150), (COL_CHECKED, 140), (COL_ACTIONS, 210),
+        ):
+            self.table.setColumnWidth(col, width)
         self.table.cellClicked.connect(self._open_link)
         layout.addWidget(self.table)
 
         self.setCentralWidget(central)
+
+        # Bottom-right switch: close to tray vs. exit the app.
+        self.tray_checkbox = QCheckBox("Close to tray")
+        self.tray_checkbox.setToolTip(
+            "On: closing the window keeps it running in the tray.\n"
+            "Off: closing exits the app."
+        )
+        self.statusBar().addPermanentWidget(self.tray_checkbox)
         self.statusBar().showMessage("Ready")
 
     # --- data → table ------------------------------------------------------
@@ -137,6 +164,8 @@ class MainWindow(QMainWindow):
     def _append_row(self, product) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
+
+        self.table.setCellWidget(row, COL_MOVE, self._move_buttons(product.id))
 
         name_item = QTableWidgetItem(product.name or product.url)
         name_item.setToolTip(f"Open: {product.url}")
@@ -179,6 +208,32 @@ class MainWindow(QMainWindow):
             button.clicked.connect(partial(handler, product_id))
             layout.addWidget(button)
         return widget
+
+    def _move_buttons(self, product_id: int) -> QWidget:
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(1)
+        up = QPushButton("▲")    # ▲
+        down = QPushButton("▼")  # ▼
+        for button, tip, delta in ((up, "Move up", -1), (down, "Move down", 1)):
+            button.setFixedWidth(26)
+            button.setToolTip(tip)
+            button.clicked.connect(partial(self._move, product_id, delta))
+            layout.addWidget(button)
+        return widget
+
+    def _move(self, product_id: int, delta: int) -> None:
+        ids = [p.id for p in repo.list_products()]
+        if product_id not in ids:
+            return
+        i = ids.index(product_id)
+        j = i + delta
+        if j < 0 or j >= len(ids):
+            return  # already at the edge
+        ids[i], ids[j] = ids[j], ids[i]
+        repo.reorder_products(ids)
+        self.reload()
 
     # --- add / refresh (async scraping) ------------------------------------
 
@@ -311,6 +366,29 @@ class MainWindow(QMainWindow):
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
 
+    def _restore_layout(self) -> None:
+        geometry = self._settings.value("geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        header_state = self._settings.value("header_state")
+        if header_state is not None:
+            self.table.horizontalHeader().restoreState(header_state)
+        row_height = self._settings.value("row_height")
+        if row_height is not None:
+            try:
+                self.table.verticalHeader().setDefaultSectionSize(int(row_height))
+            except (TypeError, ValueError):
+                pass
+        close_to_tray = self._settings.value("close_to_tray", True, type=bool)
+        self.tray_checkbox.setChecked(bool(close_to_tray) and self._tray_available)
+        self.tray_checkbox.setEnabled(self._tray_available)
+
+    def _save_layout(self) -> None:
+        self._settings.setValue("geometry", self.saveGeometry())
+        self._settings.setValue("header_state", self.table.horizontalHeader().saveState())
+        self._settings.setValue("row_height", self.table.verticalHeader().defaultSectionSize())
+        self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
+
     def _restore_window(self) -> None:
         self.showNormal()
         self.raise_()
@@ -322,13 +400,16 @@ class MainWindow(QMainWindow):
 
     def _quit(self) -> None:
         self._really_quit = True
+        self._save_layout()
         if self.tray_icon is not None:
             self.tray_icon.hide()
         QApplication.instance().quit()
 
     def closeEvent(self, event) -> None:
-        # Closing the window hides to tray so timers keep updating in the background.
-        if self._really_quit or not self._tray_available:
+        self._save_layout()
+        # The bottom-right "Close to tray" switch decides: keep running vs. exit.
+        close_to_tray = self.tray_checkbox.isChecked() and self._tray_available
+        if self._really_quit or not close_to_tray:
             event.accept()
             return
         event.ignore()
