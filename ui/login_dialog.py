@@ -1,6 +1,7 @@
 """Login / register dialog backed by Supabase Auth."""
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QCheckBox,
     QDialog,
     QFormLayout,
     QHBoxLayout,
@@ -11,7 +12,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from core.cloud import auth
+from core.cloud import auth, session_store
 
 
 class LoginDialog(QDialog):
@@ -37,6 +38,18 @@ class LoginDialog(QDialog):
         form.addRow("Email:", self.email_edit)
         form.addRow("Password:", self.password_edit)
         layout.addLayout(form)
+
+        self.remember_checkbox = QCheckBox("Remember me")
+        self.remember_checkbox.setToolTip(
+            "Stay signed in on this computer (stores a secure token, not your password)."
+        )
+        layout.addWidget(self.remember_checkbox)
+
+        # Prefill the last email and tick "remember" if a session is saved.
+        saved_email = session_store.load_email()
+        if saved_email:
+            self.email_edit.setText(saved_email)
+        self.remember_checkbox.setChecked(session_store.has_saved_session())
 
         buttons = QHBoxLayout()
         self.login_button = QPushButton("Log in")
@@ -74,6 +87,10 @@ class LoginDialog(QDialog):
             self._set_busy(False, "")
             QMessageBox.warning(self, "Sign in failed", self._friendly_error(exc))
             return
+        if self.remember_checkbox.isChecked():
+            session_store.save_session(auth.current_refresh_token(), email)
+        else:
+            session_store.clear_session()
         self.accept()
 
     def _register(self) -> None:

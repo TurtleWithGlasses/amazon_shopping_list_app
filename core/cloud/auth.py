@@ -28,6 +28,25 @@ def sign_in(email: str, password: str):
     return response
 
 
+def restore_session(refresh_token: str):
+    """Re-establish a session from a stored refresh token (for auto-login).
+    Raises on an invalid/expired token. Returns the gotrue response."""
+    global _current_user
+    response = get_client().auth.refresh_session(refresh_token)
+    _current_user = response.user
+    return response
+
+
+def current_refresh_token():
+    """The current session's refresh token, or None. Note Supabase rotates
+    refresh tokens on use, so re-save it after restoring a session."""
+    try:
+        session = get_client().auth.get_session()
+        return session.refresh_token if session else None
+    except Exception:
+        return None
+
+
 def sign_out() -> None:
     global _current_user
     try:

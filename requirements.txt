@@ -18,3 +18,4 @@ openpyxl>=3.1.0           # Excel (.xlsx) writer used by pandas.to_excel
 
 # --- Accounts & cloud sync (Phase 6) ---
 supabase>=2.0.0           # Supabase Auth (email confirmation) + Postgres data
+keyring>=24.0.0           # securely remember login (OS credential store)
