@@ -1,8 +1,12 @@
 """Settings: change account credentials and export data."""
+from PySide6.QtCore import QSettings
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDialog,
     QFileDialog,
+    QFontDialog,
     QFormLayout,
     QGroupBox,
     QHBoxLayout,
@@ -16,6 +20,7 @@ from PySide6.QtWidgets import (
 from core.cloud import auth
 from services import export as export_service
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
+from ui.theme import DEFAULT_THEME, THEME_CHOICES, apply_theme, user_font_size
 
 
 class SettingsDialog(QDialog):
@@ -25,12 +30,80 @@ class SettingsDialog(QDialog):
         self.setMinimumWidth(440)
         layout = QVBoxLayout(self)
 
+        layout.addWidget(self._build_appearance_group())
         layout.addWidget(self._build_account_group())
         layout.addWidget(self._build_export_group())
 
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.accept)
         layout.addWidget(close_button)
+
+    # --- appearance --------------------------------------------------------
+
+    def _build_appearance_group(self) -> QGroupBox:
+        box = QGroupBox("Appearance")
+        outer = QVBoxLayout(box)
+
+        theme_row = QHBoxLayout()
+        theme_row.addWidget(QLabel("Theme:"))
+        self.theme_combo = QComboBox()
+        for key, label in THEME_CHOICES:
+            self.theme_combo.addItem(label, key)
+        current = QSettings().value("theme", DEFAULT_THEME)
+        index = self.theme_combo.findData(current)
+        self.theme_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.theme_combo.currentIndexChanged.connect(self._change_theme)
+        theme_row.addWidget(self.theme_combo)
+        theme_row.addStretch(1)
+        outer.addLayout(theme_row)
+
+        font_row = QHBoxLayout()
+        font_row.addWidget(QLabel("Font:"))
+        self.font_label = QLabel(self._current_font_text())
+        font_row.addWidget(self.font_label)
+        font_row.addStretch(1)
+        choose = QPushButton("Choose font…")
+        choose.clicked.connect(self._choose_font)
+        reset = QPushButton("Default")
+        reset.clicked.connect(self._reset_font)
+        font_row.addWidget(choose)
+        font_row.addWidget(reset)
+        outer.addLayout(font_row)
+        return box
+
+    def _change_theme(self) -> None:
+        mode = self.theme_combo.currentData()
+        QSettings().setValue("theme", mode)
+        apply_theme(QApplication.instance(), mode)  # live, no restart needed
+
+    # --- font --------------------------------------------------------------
+
+    def _current_font_text(self) -> str:
+        family = QSettings().value("font_family")
+        if family:
+            return f"{family}  ({user_font_size()} pt)"
+        return "Orbitron (default)"
+
+    def _choose_font(self) -> None:
+        settings = QSettings()
+        current = QFont(settings.value("font_family") or "Orbitron", user_font_size())
+        result = QFontDialog.getFont(current, self, "Choose font")
+        # PySide6 returns (font, ok) — handle either order defensively.
+        font = next((x for x in result if isinstance(x, QFont)), None)
+        ok = next((x for x in result if isinstance(x, bool)), False)
+        if not ok or font is None:
+            return
+        settings.setValue("font_family", font.family())
+        settings.setValue("font_size", font.pointSize() if font.pointSize() > 0 else 10)
+        apply_theme(QApplication.instance(), settings.value("theme", DEFAULT_THEME))
+        self.font_label.setText(self._current_font_text())
+
+    def _reset_font(self) -> None:
+        settings = QSettings()
+        settings.remove("font_family")
+        settings.remove("font_size")
+        apply_theme(QApplication.instance(), settings.value("theme", DEFAULT_THEME))
+        self.font_label.setText(self._current_font_text())
 
     # --- account -----------------------------------------------------------
 

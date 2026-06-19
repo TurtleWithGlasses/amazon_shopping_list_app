@@ -12,7 +12,14 @@ from PyInstaller.utils.hooks import collect_data_files, collect_submodules
 datas = []
 hiddenimports = []
 
-# Selenium Manager (downloads/locates chromedriver at runtime) must be bundled.
+# Bundle the cart icon + any custom fonts so they ship with the app.
+datas += [("assets/icons/cart.svg", "assets/icons")]
+if os.path.isdir("assets/fonts"):
+    for _f in os.listdir("assets/fonts"):
+        if _f.lower().endswith((".ttf", ".otf")):
+            datas += [(os.path.join("assets/fonts", _f), "assets/fonts")]
+
+# Selenium Manager (locates chromedriver at runtime) must be bundled.
 datas += collect_data_files("selenium")
 _sel_root = os.path.dirname(selenium.__file__)
 _sel_manager = os.path.join(_sel_root, "webdriver", "common", "windows", "selenium-manager.exe")
@@ -23,6 +30,11 @@ if os.path.exists(_sel_manager):
 datas += collect_data_files("pyqtgraph")
 hiddenimports += collect_submodules("pyqtgraph")
 
+# Supabase stack + keyring use dynamic/optional imports PyInstaller can miss.
+for _pkg in ("supabase", "gotrue", "postgrest", "realtime", "storage3", "supafunc", "keyring"):
+    hiddenimports += collect_submodules(_pkg)
+hiddenimports += ["keyring.backends.Windows", "win32ctypes.pywin32", "win32timezone"]
+
 a = Analysis(
     ["main.py"],
     pathex=[],
@@ -32,7 +44,6 @@ a = Analysis(
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    # Keep the bundle lean: the old Streamlit stack and unused GUI toolkits.
     excludes=["streamlit", "streamlit_autorefresh", "tkinter", "PyQt5", "PyQt6", "PySide2"],
     noarchive=False,
 )
@@ -47,13 +58,15 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
-    console=False,          # GUI app — no console window
+    upx=False,                       # UPX packing is a common antivirus false-positive trigger
+    console=False,                   # GUI app — no console window
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,
     codesign_identity=None,
     entitlements_file=None,
+    icon="assets/icons/cart.ico",
+    version="version_info.txt",
 )
 
 coll = COLLECT(
@@ -61,7 +74,7 @@ coll = COLLECT(
     a.binaries,
     a.datas,
     strip=False,
-    upx=True,
+    upx=False,
     upx_exclude=[],
     name="PriceTracker",
 )

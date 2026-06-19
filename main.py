@@ -4,11 +4,14 @@ Run during development with:  venv\\Scripts\\python main.py
 """
 import sys
 
+from PySide6.QtCore import QSettings
 from PySide6.QtWidgets import QApplication, QDialog
 
 from core.cloud.config import is_configured
 from core.db import init_db
+from ui.icons import app_icon
 from ui.main_window import MainWindow
+from ui.theme import DEFAULT_THEME, apply_theme
 
 
 def _ensure_logged_in() -> bool:
@@ -49,11 +52,25 @@ def _run_cloud(app: QApplication) -> None:
         return  # normal quit
 
 
+def _set_windows_app_id() -> None:
+    # Without an explicit AppUserModelID, Windows shows the python.exe icon in the
+    # taskbar instead of our window icon when running as a script.
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("PriceTracker.App")
+        except Exception:
+            pass
+
+
 def main() -> None:
+    _set_windows_app_id()
     init_db()  # local SQLite cache schema in %LOCALAPPDATA%\PriceTracker
     app = QApplication(sys.argv)
     app.setApplicationName("Price Tracker")
     app.setOrganizationName("PriceTracker")
+    app.setWindowIcon(app_icon())
+    apply_theme(app, QSettings().value("theme", DEFAULT_THEME))
 
     if is_configured():
         _run_cloud(app)

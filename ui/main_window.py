@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QSystemTrayIcon,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -32,6 +33,7 @@ from services.scrape_worker import ScrapeTask
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
+from ui.icons import app_icon
 from ui.settings_dialog import SettingsDialog
 
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
@@ -111,24 +113,11 @@ class MainWindow(QMainWindow):
         central = QWidget()
         layout = QVBoxLayout(central)
 
-        # Signed-in user banner with Settings / Log out
-        banner = QHBoxLayout()
+        # Signed-in user banner (Settings / Log out live in the File menu)
         name = auth.current_display_name()
         self.user_label = QLabel(f"Signed in as {name}" if name else "")
-        self.user_label.setStyleSheet("color: #555; padding: 2px 0;")
         self.user_label.setVisible(bool(name))
-        banner.addWidget(self.user_label)
-        banner.addStretch(1)
-        self.settings_button = QPushButton("Settings")
-        self.settings_button.clicked.connect(self._open_settings)
-        self.logout_button = QPushButton("Log out")
-        self.logout_button.clicked.connect(self._logout)
-        logged_in = auth.is_logged_in()
-        self.settings_button.setVisible(logged_in)
-        self.logout_button.setVisible(logged_in)
-        banner.addWidget(self.settings_button)
-        banner.addWidget(self.logout_button)
-        layout.addLayout(banner)
+        layout.addWidget(self.user_label)
 
         # Add bar
         add_bar = QHBoxLayout()
@@ -150,6 +139,8 @@ class MainWindow(QMainWindow):
             ["", "Product", "Price", "Stock", "Last checked", "Actions"]
         )
         self.table.verticalHeader().setVisible(False)
+        self.table.verticalHeader().setDefaultSectionSize(44)  # taller rows
+        self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
 
@@ -159,8 +150,8 @@ class MainWindow(QMainWindow):
         for col in range(6):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         for col, width in (
-            (COL_MOVE, 64), (COL_NAME, 340), (COL_PRICE, 110),
-            (COL_STOCK, 150), (COL_CHECKED, 140), (COL_ACTIONS, 210),
+            (COL_MOVE, 84), (COL_NAME, 340), (COL_PRICE, 110),
+            (COL_STOCK, 150), (COL_CHECKED, 140), (COL_ACTIONS, 280),
         ):
             self.table.setColumnWidth(col, width)
         header.setSectionsClickable(True)
@@ -286,13 +277,15 @@ class MainWindow(QMainWindow):
     def _move_buttons(self, product_id: int) -> QWidget:
         widget = QWidget()
         layout = QHBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(1)
-        up = QPushButton("▲")    # ▲
-        down = QPushButton("▼")  # ▼
+        layout.setContentsMargins(2, 2, 2, 2)
+        layout.setSpacing(3)
+        up = QToolButton()
+        up.setArrowType(Qt.ArrowType.UpArrow)
+        down = QToolButton()
+        down.setArrowType(Qt.ArrowType.DownArrow)
         for button, tip, delta in ((up, "Move up", -1), (down, "Move down", 1)):
-            button.setFixedWidth(26)
             button.setToolTip(tip)
+            button.setFixedSize(32, 30)
             button.clicked.connect(partial(self._move, product_id, delta))
             layout.addWidget(button)
         return widget
@@ -431,7 +424,9 @@ class MainWindow(QMainWindow):
         self._snapshot_timer.start(SNAPSHOT_INTERVAL_MS)
 
     def _build_tray(self) -> None:
-        icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
+        icon = app_icon()
+        if icon.isNull():
+            icon = self.style().standardIcon(QStyle.StandardPixmap.SP_ComputerIcon)
         self.setWindowIcon(icon)
         self._tray_available = QSystemTrayIcon.isSystemTrayAvailable()
         if not self._tray_available:
@@ -451,15 +446,11 @@ class MainWindow(QMainWindow):
         geometry = self._settings.value("geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
-        header_state = self._settings.value("header_state")
+        # _v2: layout defaults changed (taller rows, wider columns), so old saved
+        # column widths are intentionally ignored.
+        header_state = self._settings.value("header_state_v2")
         if header_state is not None:
             self.table.horizontalHeader().restoreState(header_state)
-        row_height = self._settings.value("row_height")
-        if row_height is not None:
-            try:
-                self.table.verticalHeader().setDefaultSectionSize(int(row_height))
-            except (TypeError, ValueError):
-                pass
         close_to_tray = self._settings.value("close_to_tray", True, type=bool)
         self.tray_checkbox.setChecked(bool(close_to_tray) and self._tray_available)
         self.tray_checkbox.setEnabled(self._tray_available)
@@ -480,8 +471,7 @@ class MainWindow(QMainWindow):
 
     def _save_layout(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
-        self._settings.setValue("header_state", self.table.horizontalHeader().saveState())
-        self._settings.setValue("row_height", self.table.verticalHeader().defaultSectionSize())
+        self._settings.setValue("header_state_v2", self.table.horizontalHeader().saveState())
         self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
         self._settings.setValue("sort_column", -1 if self._sort_column is None else self._sort_column)
         self._settings.setValue("sort_order", self._sort_order.value)
