@@ -32,6 +32,7 @@ from services.scrape_worker import ScrapeTask
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
+from ui.settings_dialog import SettingsDialog
 
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
 _CHANGED_COLOR = QColor("#e8830c")  # orange for changed price/stock
@@ -61,6 +62,7 @@ class MainWindow(QMainWindow):
         self._tasks = []          # keep refs so QRunnables aren't GC'd
         self._pending_refresh = 0
         self._really_quit = False
+        self.logout_requested = False
         self._tray_available = False
         self.tray_icon = None
         # per-batch refresh state
@@ -93,20 +95,40 @@ class MainWindow(QMainWindow):
         file_menu.addAction(export_xlsx)
 
         file_menu.addSeparator()
+        settings_action = QAction("&Settings…", self)
+        settings_action.triggered.connect(self._open_settings)
+        file_menu.addAction(settings_action)
+        logout_action = QAction("&Log out", self)
+        logout_action.triggered.connect(self._logout)
+        file_menu.addAction(logout_action)
+
+        file_menu.addSeparator()
         quit_action = QAction("E&xit", self)
-        quit_action.triggered.connect(self.close)
+        quit_action.triggered.connect(self._quit)
         file_menu.addAction(quit_action)
 
     def _build_central(self) -> None:
         central = QWidget()
         layout = QVBoxLayout(central)
 
-        # Signed-in user banner
+        # Signed-in user banner with Settings / Log out
+        banner = QHBoxLayout()
         name = auth.current_display_name()
         self.user_label = QLabel(f"Signed in as {name}" if name else "")
         self.user_label.setStyleSheet("color: #555; padding: 2px 0;")
         self.user_label.setVisible(bool(name))
-        layout.addWidget(self.user_label)
+        banner.addWidget(self.user_label)
+        banner.addStretch(1)
+        self.settings_button = QPushButton("Settings")
+        self.settings_button.clicked.connect(self._open_settings)
+        self.logout_button = QPushButton("Log out")
+        self.logout_button.clicked.connect(self._logout)
+        logged_in = auth.is_logged_in()
+        self.settings_button.setVisible(logged_in)
+        self.logout_button.setVisible(logged_in)
+        banner.addWidget(self.settings_button)
+        banner.addWidget(self.logout_button)
+        layout.addLayout(banner)
 
         # Add bar
         add_bar = QHBoxLayout()
@@ -479,6 +501,27 @@ class MainWindow(QMainWindow):
         if self.tray_icon is not None:
             self.tray_icon.hide()
         QApplication.instance().quit()
+
+    def _open_settings(self) -> None:
+        SettingsDialog(self).exec()
+        # Name may have changed — refresh the banner.
+        name = auth.current_display_name()
+        self.user_label.setText(f"Signed in as {name}" if name else "")
+        self.user_label.setVisible(bool(name))
+
+    def _logout(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Log out", "Log out? You'll need to sign in again next time."
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        # Close the window for real so main.py can return to the login screen.
+        self.logout_requested = True
+        self._really_quit = True
+        self._save_layout()
+        if self.tray_icon is not None:
+            self.tray_icon.hide()
+        self.close()
 
     def closeEvent(self, event) -> None:
         self._save_layout()

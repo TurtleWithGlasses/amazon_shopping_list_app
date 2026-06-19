@@ -83,5 +83,28 @@ def current_display_name() -> Optional[str]:
     return full or _current_user.email
 
 
+def _update_user(attributes: dict):
+    global _current_user
+    response = get_client().auth.update_user(attributes)
+    if response and response.user:
+        _current_user = response.user
+    return response
+
+
+def update_profile(first_name: str, last_name: str):
+    """Update the user's first/last name (stored in user metadata)."""
+    return _update_user({"data": {"first_name": first_name, "last_name": last_name}})
+
+
+def update_password(new_password: str):
+    """Change the password immediately for the logged-in user."""
+    return _update_user({"password": new_password})
+
+
+def update_email(new_email: str):
+    """Request an email change; Supabase emails a confirmation to the new address."""
+    return _update_user({"email": new_email})
+
+
 def is_logged_in() -> bool:
     return _current_user is not None
