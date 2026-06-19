@@ -67,6 +67,9 @@ class MainWindow(QMainWindow):
         self._refresh_snapshot = False
         self._refresh_notify = False
         self._refresh_changes = []
+        # Sort state: column None = manual (position) order.
+        self._sort_column = None
+        self._sort_order = Qt.SortOrder.AscendingOrder
         self._settings = QSettings()
 
         self._build_menu()
@@ -138,6 +141,8 @@ class MainWindow(QMainWindow):
             (COL_STOCK, 150), (COL_CHECKED, 140), (COL_ACTIONS, 210),
         ):
             self.table.setColumnWidth(col, width)
+        header.setSectionsClickable(True)
+        header.sectionClicked.connect(self._on_header_clicked)
         self.table.cellClicked.connect(self._open_link)
         layout.addWidget(self.table)
 
@@ -155,11 +160,58 @@ class MainWindow(QMainWindow):
     # --- data → table ------------------------------------------------------
 
     def reload(self) -> None:
-        products = repo.list_products()
+        products = self._sort_products(repo.list_products())
         self.table.setRowCount(0)
         for product in products:
             self._append_row(product)
         self.statusBar().showMessage(f"{len(products)} product(s) tracked")
+
+    # --- sorting -----------------------------------------------------------
+
+    _SORTABLE_COLUMNS = (COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED)
+
+    def _sort_value(self, product, col):
+        if col == COL_NAME:
+            return (product.name or product.url or "").casefold()
+        if col == COL_PRICE:
+            return product.last_price
+        if col == COL_STOCK:
+            return (product.last_stock or "").casefold() or None
+        if col == COL_CHECKED:
+            return product.last_checked
+        return None
+
+    def _sort_products(self, products):
+        if self._sort_column is None:
+            return products  # manual / position order from the repository
+        reverse = self._sort_order == Qt.SortOrder.DescendingOrder
+        keyed = [(self._sort_value(p, self._sort_column), p) for p in products]
+        present = [(v, p) for v, p in keyed if v is not None]
+        missing = [p for v, p in keyed if v is None]
+        present.sort(key=lambda item: item[0], reverse=reverse)
+        return [p for _, p in present] + missing  # missing values always last
+
+    def _on_header_clicked(self, col: int) -> None:
+        if col not in self._SORTABLE_COLUMNS:
+            return
+        if self._sort_column != col:
+            self._sort_column = col
+            self._sort_order = Qt.SortOrder.AscendingOrder
+        elif self._sort_order == Qt.SortOrder.AscendingOrder:
+            self._sort_order = Qt.SortOrder.DescendingOrder
+        else:
+            self._sort_column = None  # third click → back to manual order
+        self._apply_sort_indicator()
+        self.reload()
+        self._save_layout()
+
+    def _apply_sort_indicator(self) -> None:
+        header = self.table.horizontalHeader()
+        if self._sort_column is None:
+            header.setSortIndicatorShown(False)
+        else:
+            header.setSortIndicatorShown(True)
+            header.setSortIndicator(self._sort_column, self._sort_order)
 
     def _append_row(self, product) -> None:
         row = self.table.rowCount()
@@ -224,7 +276,9 @@ class MainWindow(QMainWindow):
         return widget
 
     def _move(self, product_id: int, delta: int) -> None:
-        ids = [p.id for p in repo.list_products()]
+        # Reorder against the order currently shown (which may be sorted).
+        displayed = self._sort_products(repo.list_products())
+        ids = [p.id for p in displayed]
         if product_id not in ids:
             return
         i = ids.index(product_id)
@@ -233,7 +287,12 @@ class MainWindow(QMainWindow):
             return  # already at the edge
         ids[i], ids[j] = ids[j], ids[i]
         repo.reorder_products(ids)
+        # A manual move commits to manual ordering so the change is visible.
+        if self._sort_column is not None:
+            self._sort_column = None
+            self._apply_sort_indicator()
         self.reload()
+        self._save_layout()
 
     # --- add / refresh (async scraping) ------------------------------------
 
@@ -383,11 +442,27 @@ class MainWindow(QMainWindow):
         self.tray_checkbox.setChecked(bool(close_to_tray) and self._tray_available)
         self.tray_checkbox.setEnabled(self._tray_available)
 
+        try:
+            sort_col = int(self._settings.value("sort_column", -1))
+        except (TypeError, ValueError):
+            sort_col = -1
+        self._sort_column = None if sort_col < 0 else sort_col
+        try:
+            sort_ord = int(self._settings.value("sort_order", 0))
+        except (TypeError, ValueError):
+            sort_ord = 0
+        self._sort_order = (
+            Qt.SortOrder.DescendingOrder if sort_ord == 1 else Qt.SortOrder.AscendingOrder
+        )
+        self._apply_sort_indicator()
+
     def _save_layout(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("header_state", self.table.horizontalHeader().saveState())
         self._settings.setValue("row_height", self.table.verticalHeader().defaultSectionSize())
         self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
+        self._settings.setValue("sort_column", -1 if self._sort_column is None else self._sort_column)
+        self._settings.setValue("sort_order", self._sort_order.value)
 
     def _restore_window(self) -> None:
         self.showNormal()
