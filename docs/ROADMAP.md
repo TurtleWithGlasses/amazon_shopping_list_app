@@ -75,20 +75,19 @@ manual row ordering with up/down arrows; layout persistence; "Close to tray"
 switch. Hardened build: embedded version info, no UPX, per-user install,
 bundled cloud config so the installed app is account-enabled on any machine.
 
+### Phase 12 — Center-aligned columns
+Price / Stock / Last-checked columns center-aligned; Product stays left-aligned.
+
+### Phase 13 — Product image in each row
+Adapters extract the main image URL (`ProductData.image_url`); `image_url`
+column added (local model + Supabase migration). An async loader
+([ui/image_cache.py](../ui/image_cache.py)) downloads each thumbnail once,
+caches it under `%LOCALAPPDATA%\PriceTracker\images\`, and shows it in a new
+image column (56px thumbnails in 70px rows).
+
 ---
 
 ## Upcoming
-
-### Phase 12 — Center-align Price / Stock / Last checked columns
-Set `Qt.AlignCenter` on those items (and optionally header sections) in
-`ui/main_window.py`. No deps/schema. Quick win.
-
-### Phase 13 — Product image in each row
-- Adapters also extract the main image URL; `ProductData` gains `image_url`.
-- Schema: add `image_url` to `products` (local model + Supabase migration).
-- New image column; thumbnails downloaded once, cached in
-  `%LOCALAPPDATA%\PriceTracker\images\`, displayed scaled to row height (async).
-- Deps: `requests`. Gotchas: async download/caching, uniform ~40px thumbnails.
 
 ### Phase 14 — "What changed while you were away" + back-in-stock
 *(Covers shutdown→startup price comparison and out-of-stock→in-stock detection.
@@ -118,8 +117,8 @@ per-site (differing layouts, bot detection) — validate and ship one at a time.
   downloads hit SmartScreen); replacing a running exe is hard, so v1 =
   "notify + open release", v2 = assisted download/run.
 
-**Suggested order:** 12 → 13 → 14 → 15 → 16 → 17 (14 before 15: Telegram plugs
-into the notification service).
+**Suggested order:** 14 → 15 → 16 → 17 (14 before 15: Telegram plugs into the
+notification service).
 
 ---
 
