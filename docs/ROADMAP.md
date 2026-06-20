@@ -85,24 +85,23 @@ column added (local model + Supabase migration). An async loader
 caches it under `%LOCALAPPDATA%\PriceTracker\images\`, and shows it in a new
 image column (56px thumbnails in 70px rows).
 
+### Phase 14 — Away-changes + back-in-stock notifications
+Channel-agnostic `NotificationService` ([services/notifications.py](../services/notifications.py))
+with a tray channel. On launch, a one-shot background refresh diffs current
+price/stock against the values persisted from the last session and notifies
+("While you were away"). Back-in-stock is detected via the stock classifier's
+`OUT → available` transition and surfaced separately, in both startup and the
+5-minute refresh. Notifications are categorized (back in stock / price / stock).
+
+### Phase 15 — Telegram notifications
+`TelegramNotifier` ([services/telegram.py](../services/telegram.py)) plugs into
+the NotificationService: self-gating, async (never blocks the UI). Settings →
+Telegram: bot token (stored in keyring), chat ID + enabled (QSettings), and a
+"Send test" button. Token is never logged.
+
 ---
 
 ## Upcoming
-
-### Phase 14 — "What changed while you were away" + back-in-stock
-*(Covers shutdown→startup price comparison and out-of-stock→in-stock detection.
-Builds on existing change flags, making them session-aware and explicit.)*
-- A `NotificationService` abstraction (tray now; Telegram in Phase 15).
-- Startup background refresh → diff vs persisted `last_price`/`last_stock` →
-  summary notification.
-- Back-in-stock detection via the stock classifier levels (`OUT → IN_STOCK`).
-- No deps/schema. Gotcha: startup refresh is slow (Selenium) → run in background.
-
-### Phase 15 — Telegram bot notifications
-- `TelegramNotifier` plugged into the Phase 14 NotificationService (Bot API).
-- Settings: bot token + chat ID (token in keyring), "Send test message", toggle.
-- Deps: `requests`. The user creates a bot via BotFather; opt-in; respect rate
-  limits; never log the token.
 
 ### Phase 16 — More e-commerce sites
 One `RetailerAdapter` per site, registered in the registry. Candidates (TR):
@@ -117,8 +116,7 @@ per-site (differing layouts, bot detection) — validate and ship one at a time.
   downloads hit SmartScreen); replacing a running exe is hard, so v1 =
   "notify + open release", v2 = assisted download/run.
 
-**Suggested order:** 14 → 15 → 16 → 17 (14 before 15: Telegram plugs into the
-notification service).
+**Suggested order:** 16 → 17.
 
 ---
 

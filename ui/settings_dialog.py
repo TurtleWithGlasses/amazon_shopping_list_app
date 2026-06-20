@@ -3,6 +3,7 @@ from PySide6.QtCore import QSettings
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
+    QCheckBox,
     QComboBox,
     QDialog,
     QFileDialog,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
 
 from core.cloud import auth
 from services import export as export_service
+from services import telegram as tg
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.theme import DEFAULT_THEME, THEME_CHOICES, apply_theme, user_font_size
 
@@ -32,6 +34,7 @@ class SettingsDialog(QDialog):
 
         layout.addWidget(self._build_appearance_group())
         layout.addWidget(self._build_account_group())
+        layout.addWidget(self._build_telegram_group())
         layout.addWidget(self._build_export_group())
 
         close_button = QPushButton("Close")
@@ -170,6 +173,51 @@ class SettingsDialog(QDialog):
             "A confirmation link was sent to the new address. "
             "The change takes effect once you confirm it.",
         )
+
+    # --- telegram ----------------------------------------------------------
+
+    def _build_telegram_group(self) -> QGroupBox:
+        box = QGroupBox("Telegram notifications")
+        form = QFormLayout(box)
+
+        hint = QLabel("Create a bot with @BotFather, then get your chat ID from @userinfobot.")
+        hint.setWordWrap(True)
+        form.addRow(hint)
+
+        self.tg_token = QLineEdit(tg.load_token() or "")
+        self.tg_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self.tg_token.setPlaceholderText("Bot token from @BotFather")
+        self.tg_chat = QLineEdit(tg.chat_id())
+        self.tg_chat.setPlaceholderText("Your chat ID")
+        self.tg_enabled = QCheckBox("Send notifications to Telegram")
+        self.tg_enabled.setChecked(tg.is_enabled())
+        form.addRow("Bot token:", self.tg_token)
+        form.addRow("Chat ID:", self.tg_chat)
+        form.addRow("", self.tg_enabled)
+
+        buttons = QHBoxLayout()
+        save = QPushButton("Save")
+        save.clicked.connect(self._save_telegram)
+        test = QPushButton("Send test")
+        test.clicked.connect(self._test_telegram)
+        buttons.addWidget(save)
+        buttons.addWidget(test)
+        buttons.addStretch(1)
+        form.addRow(buttons)
+        return box
+
+    def _save_telegram(self) -> None:
+        tg.save_token(self.tg_token.text().strip())
+        tg.set_chat_id(self.tg_chat.text().strip())
+        tg.set_enabled(self.tg_enabled.isChecked())
+        QMessageBox.information(self, "Telegram", "Telegram settings saved.")
+
+    def _test_telegram(self) -> None:
+        ok, error = tg.send_test(self.tg_token.text().strip(), self.tg_chat.text().strip())
+        if ok:
+            QMessageBox.information(self, "Telegram", "Test message sent ✅")
+        else:
+            QMessageBox.warning(self, "Telegram", error or "Failed to send.")
 
     # --- export ------------------------------------------------------------
 

@@ -32,6 +32,7 @@ from services import export as export_service
 from services.notifications import NotificationService
 from services.scrape_worker import ScrapeTask
 from services.stock import OUT_OF_STOCK, classify_stock
+from services.telegram import TelegramNotifier
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
@@ -83,6 +84,7 @@ class MainWindow(QMainWindow):
         self._settings = QSettings()
         self._images = ImageLoader(self)
         self._notifications = NotificationService()
+        self._notifications.add_channel(TelegramNotifier())  # self-gates until configured
         # refresh batch state
         self._refresh_title = "Price / stock changed"
         self._price_changes = []
