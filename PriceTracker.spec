@@ -19,6 +19,12 @@ if os.path.isdir("assets/fonts"):
         if _f.lower().endswith((".ttf", ".otf")):
             datas += [(os.path.join("assets/fonts", _f), "assets/fonts")]
 
+# Bundle the Supabase config (URL + anon key) so the installed app is cloud-
+# enabled on any machine. The anon key is safe to ship — row-level security
+# protects the data; never put the service_role key here.
+if os.path.exists("config.local.json"):
+    datas += [("config.local.json", ".")]
+
 # Selenium Manager (locates chromedriver at runtime) must be bundled.
 datas += collect_data_files("selenium")
 _sel_root = os.path.dirname(selenium.__file__)

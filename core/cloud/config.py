@@ -10,6 +10,7 @@ data. The service-role key must NEVER be placed in any of these files.
 """
 import json
 import os
+import sys
 from pathlib import Path
 from typing import Optional, Tuple
 
@@ -20,7 +21,14 @@ ENV_KEY = "SUPABASE_ANON_KEY"
 
 
 def _config_files():
-    return [Path("config.local.json"), app_data_dir() / "config.json"]
+    paths = [Path("config.local.json")]
+    # In a frozen build, the config is bundled next to the app code (_MEIPASS).
+    bundle_dir = getattr(sys, "_MEIPASS", None)
+    if bundle_dir:
+        paths.append(Path(bundle_dir) / "config.local.json")
+        paths.append(Path(bundle_dir) / "config.json")
+    paths.append(app_data_dir() / "config.json")
+    return paths
 
 
 def load_supabase_config() -> Tuple[Optional[str], Optional[str]]:
