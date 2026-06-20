@@ -41,7 +41,8 @@ _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
 _CHANGED_COLOR = QColor("#e8830c")  # orange for changed price/stock
 
 COL_MOVE, COL_IMAGE, COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED, COL_ACTIONS = range(7)
-IMG_SIZE = 40  # product thumbnail size (px), fits the 44px row height
+IMG_SIZE = 56    # product thumbnail size (px)
+ROW_HEIGHT = 70  # row height; leaves margin around the thumbnail
 
 # Timer intervals (overridable via env vars for testing).
 REFRESH_INTERVAL_MS = int(os.environ.get("PRICETRACKER_REFRESH_MS", 5 * 60 * 1000))      # 5 min
@@ -142,7 +143,7 @@ class MainWindow(QMainWindow):
             ["", "", "Product", "Price", "Stock", "Last checked", "Actions"]
         )
         self.table.verticalHeader().setVisible(False)
-        self.table.verticalHeader().setDefaultSectionSize(44)  # taller rows
+        self.table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
         self.table.setAlternatingRowColors(True)
         self.table.setEditTriggers(QTableWidget.EditTrigger.NoEditTriggers)
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
@@ -153,7 +154,7 @@ class MainWindow(QMainWindow):
         for col in range(7):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         for col, width in (
-            (COL_MOVE, 84), (COL_IMAGE, 56), (COL_NAME, 320), (COL_PRICE, 110),
+            (COL_MOVE, 84), (COL_IMAGE, 74), (COL_NAME, 320), (COL_PRICE, 110),
             (COL_STOCK, 150), (COL_CHECKED, 140), (COL_ACTIONS, 280),
         ):
             self.table.setColumnWidth(col, width)
@@ -237,7 +238,7 @@ class MainWindow(QMainWindow):
 
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        image_label.setFixedSize(IMG_SIZE + 8, IMG_SIZE + 8)
+        image_label.setFixedSize(IMG_SIZE + 6, IMG_SIZE + 6)
         self.table.setCellWidget(row, COL_IMAGE, image_label)
         self._images.load(getattr(product, "image_url", None), image_label, IMG_SIZE)
 
@@ -463,7 +464,7 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
         # _v2: layout defaults changed (taller rows, wider columns), so old saved
         # column widths are intentionally ignored.
-        header_state = self._settings.value("header_state_v3")
+        header_state = self._settings.value("header_state_v4")
         if header_state is not None:
             self.table.horizontalHeader().restoreState(header_state)
         close_to_tray = self._settings.value("close_to_tray", True, type=bool)
@@ -486,7 +487,7 @@ class MainWindow(QMainWindow):
 
     def _save_layout(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
-        self._settings.setValue("header_state_v3", self.table.horizontalHeader().saveState())
+        self._settings.setValue("header_state_v4", self.table.horizontalHeader().saveState())
         self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
         self._settings.setValue("sort_column", -1 if self._sort_column is None else self._sort_column)
         self._settings.setValue("sort_order", self._sort_order.value)
