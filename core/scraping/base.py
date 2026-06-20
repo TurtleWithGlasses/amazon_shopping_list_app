@@ -16,6 +16,7 @@ class ProductData:
     price: Optional[float] = None
     currency: str = ""
     stock: Optional[str] = None
+    image_url: Optional[str] = None
     error: Optional[str] = None
 
     @property

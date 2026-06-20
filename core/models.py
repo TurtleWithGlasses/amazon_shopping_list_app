@@ -29,6 +29,7 @@ class Product(Base):
     retailer: Mapped[str] = mapped_column(String, default="", nullable=False)
     name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     currency: Mapped[str] = mapped_column(String, default="", nullable=False)
+    image_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
 
     # Latest observed values
     last_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)

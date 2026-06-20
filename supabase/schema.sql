@@ -9,6 +9,7 @@ create table if not exists public.products (
     retailer        text not null default '',
     name            text,
     currency        text not null default '',
+    image_url       text,
     last_price      double precision,
     last_stock      text,
     prev_price      double precision,
@@ -23,6 +24,8 @@ create index if not exists products_user_idx on public.products (user_id);
 
 -- Migration for existing projects: add the manual-ordering column if missing.
 alter table public.products add column if not exists position integer not null default 0;
+-- Product thumbnail URL (Phase 13).
+alter table public.products add column if not exists image_url text;
 
 create table if not exists public.price_history (
     id            bigint generated always as identity primary key,

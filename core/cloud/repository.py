@@ -22,6 +22,7 @@ class CloudProduct:
     retailer: str
     name: Optional[str]
     currency: str
+    image_url: Optional[str]
     last_price: Optional[float]
     last_stock: Optional[str]
     prev_price: Optional[float]
@@ -71,6 +72,7 @@ def _to_product(row: dict) -> CloudProduct:
         retailer=row.get("retailer") or "",
         name=row.get("name"),
         currency=row.get("currency") or "",
+        image_url=row.get("image_url"),
         last_price=row.get("last_price"),
         last_stock=row.get("last_stock"),
         prev_price=row.get("prev_price"),
@@ -101,7 +103,7 @@ def _next_position(client) -> int:
 
 
 def add_product(url, name=None, price=None, currency="", stock=None,
-                retailer=None, user_id=None) -> CloudProduct:
+                retailer=None, user_id=None, image_url=None) -> CloudProduct:
     client = get_client()
     payload = {
         "user_id": user_id or current_user_id(),
@@ -109,6 +111,7 @@ def add_product(url, name=None, price=None, currency="", stock=None,
         "retailer": retailer or _retailer_from_url(url),
         "name": name,
         "currency": currency,
+        "image_url": image_url,
         "last_price": price,
         "last_stock": stock,
         "position": _next_position(client),
@@ -161,7 +164,7 @@ def delete_product(product_id) -> bool:
 
 
 def apply_scrape_result(product_id, name=None, price=None, currency=None,
-                        stock=None) -> Optional[CloudProduct]:
+                        stock=None, image_url=None) -> Optional[CloudProduct]:
     client = get_client()
     rows = client.table("products").select("*").eq("id", product_id).limit(1).execute().data
     if not rows:
@@ -188,6 +191,8 @@ def apply_scrape_result(product_id, name=None, price=None, currency=None,
         updates["last_price"] = price
     if stock is not None:
         updates["last_stock"] = stock
+    if image_url:
+        updates["image_url"] = image_url
 
     updated = client.table("products").update(updates).eq("id", product_id).execute().data
     return _to_product(updated[0]) if updated else None

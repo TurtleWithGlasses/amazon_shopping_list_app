@@ -34,12 +34,14 @@ from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
 from ui.icons import app_icon
+from ui.image_cache import ImageLoader
 from ui.settings_dialog import SettingsDialog
 
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
 _CHANGED_COLOR = QColor("#e8830c")  # orange for changed price/stock
 
-COL_MOVE, COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED, COL_ACTIONS = range(6)
+COL_MOVE, COL_IMAGE, COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED, COL_ACTIONS = range(7)
+IMG_SIZE = 40  # product thumbnail size (px), fits the 44px row height
 
 # Timer intervals (overridable via env vars for testing).
 REFRESH_INTERVAL_MS = int(os.environ.get("PRICETRACKER_REFRESH_MS", 5 * 60 * 1000))      # 5 min
@@ -75,6 +77,7 @@ class MainWindow(QMainWindow):
         self._sort_column = None
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._settings = QSettings()
+        self._images = ImageLoader(self)
 
         self._build_menu()
         self._build_central()
@@ -134,9 +137,9 @@ class MainWindow(QMainWindow):
         layout.addLayout(add_bar)
 
         # Table
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels(
-            ["", "Product", "Price", "Stock", "Last checked", "Actions"]
+            ["", "", "Product", "Price", "Stock", "Last checked", "Actions"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(44)  # taller rows
@@ -147,10 +150,10 @@ class MainWindow(QMainWindow):
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         # All columns user-resizable; saved widths are restored in _restore_layout.
-        for col in range(6):
+        for col in range(7):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         for col, width in (
-            (COL_MOVE, 84), (COL_NAME, 340), (COL_PRICE, 110),
+            (COL_MOVE, 84), (COL_IMAGE, 56), (COL_NAME, 320), (COL_PRICE, 110),
             (COL_STOCK, 150), (COL_CHECKED, 140), (COL_ACTIONS, 280),
         ):
             self.table.setColumnWidth(col, width)
@@ -231,6 +234,12 @@ class MainWindow(QMainWindow):
         self.table.insertRow(row)
 
         self.table.setCellWidget(row, COL_MOVE, self._move_buttons(product.id))
+
+        image_label = QLabel()
+        image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        image_label.setFixedSize(IMG_SIZE + 8, IMG_SIZE + 8)
+        self.table.setCellWidget(row, COL_IMAGE, image_label)
+        self._images.load(getattr(product, "image_url", None), image_label, IMG_SIZE)
 
         name_item = QTableWidgetItem(product.name or product.url)
         name_item.setToolTip(f"Open: {product.url}")
@@ -330,7 +339,8 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Could not add product", data.error or "Unknown error.")
             self.statusBar().showMessage("Add failed")
             return
-        repo.add_product(data.url, data.name, data.price, data.currency, data.stock)
+        repo.add_product(data.url, data.name, data.price, data.currency, data.stock,
+                         image_url=data.image_url)
         self.url_input.clear()
         self.reload()
         self.statusBar().showMessage(f"Added: {data.name}")
@@ -366,6 +376,7 @@ class MainWindow(QMainWindow):
                 price=data.price,
                 currency=data.currency,
                 stock=data.stock,
+                image_url=data.image_url,
             )
             if product is not None:
                 if self._refresh_snapshot:
@@ -452,7 +463,7 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
         # _v2: layout defaults changed (taller rows, wider columns), so old saved
         # column widths are intentionally ignored.
-        header_state = self._settings.value("header_state_v2")
+        header_state = self._settings.value("header_state_v3")
         if header_state is not None:
             self.table.horizontalHeader().restoreState(header_state)
         close_to_tray = self._settings.value("close_to_tray", True, type=bool)
@@ -475,7 +486,7 @@ class MainWindow(QMainWindow):
 
     def _save_layout(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
-        self._settings.setValue("header_state_v2", self.table.horizontalHeader().saveState())
+        self._settings.setValue("header_state_v3", self.table.horizontalHeader().saveState())
         self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
         self._settings.setValue("sort_column", -1 if self._sort_column is None else self._sort_column)
         self._settings.setValue("sort_order", self._sort_order.value)

@@ -44,6 +44,15 @@ _STOCK_SELECTORS = [
     ".primary-availability-message",
 ]
 
+_IMAGE_SELECTORS = [
+    "#landingImage",
+    "#imgTagWrapperId img",
+    "#main-image-container img",
+    "#imgBlkFront",
+    "#ebooksImgBlkFront",
+    ".a-dynamic-image",
+]
+
 
 class AmazonAdapter(RetailerAdapter):
     name = "amazon"
@@ -83,8 +92,10 @@ class AmazonAdapter(RetailerAdapter):
 
         price, currency = self._extract_price_and_currency(soup)
         stock = self._extract_stock(soup)
+        image_url = self._extract_image(soup)
         return ProductData(
-            url=clean_url, name=name, price=price, currency=currency, stock=stock
+            url=clean_url, name=name, price=price, currency=currency,
+            stock=stock, image_url=image_url,
         )
 
     # --- parsing helpers ---------------------------------------------------
@@ -128,6 +139,27 @@ class AmazonAdapter(RetailerAdapter):
             None,
         )
         return " ".join(element.get_text().split()) if element else "Unknown"
+
+    @staticmethod
+    def _extract_image(soup) -> Optional[str]:
+        for sel in _IMAGE_SELECTORS:
+            element = soup.select_one(sel)
+            if not element:
+                continue
+            for attr in ("data-old-hires", "src"):
+                value = element.get(attr)
+                if value and value.startswith("http"):
+                    return value
+            dynamic = element.get("data-a-dynamic-image")
+            if dynamic:
+                try:
+                    import json
+                    urls = json.loads(dynamic)
+                    if urls:
+                        return next(iter(urls))
+                except Exception:
+                    pass
+        return None
 
     @staticmethod
     def _classify_failure(soup) -> str:

@@ -31,6 +31,7 @@ def add_product(
     stock: Optional[str] = None,
     retailer: Optional[str] = None,
     user_id: Optional[int] = None,
+    image_url: Optional[str] = None,
 ) -> Product:
     """Insert a product and seed its first price-history row if we already have data."""
     with session_scope() as session:
@@ -42,6 +43,7 @@ def add_product(
             retailer=retailer or _retailer_from_url(url),
             last_price=price,
             last_stock=stock,
+            image_url=image_url,
             user_id=user_id,
             position=next_position,
             last_checked=utcnow() if (price is not None or stock is not None) else None,
@@ -110,6 +112,7 @@ def apply_scrape_result(
     price: Optional[float] = None,
     currency: Optional[str] = None,
     stock: Optional[str] = None,
+    image_url: Optional[str] = None,
 ) -> Optional[Product]:
     """Update a product's latest values and compute price/stock change flags.
 
@@ -144,6 +147,8 @@ def apply_scrape_result(
             product.last_price = price
         if stock is not None:
             product.last_stock = stock
+        if image_url:
+            product.image_url = image_url
         product.last_checked = utcnow()
 
         return product
