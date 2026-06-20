@@ -122,7 +122,18 @@ a bespoke adapter for those later. Robust price parsing handles US/EU formats.
   downloads hit SmartScreen); replacing a running exe is hard, so v1 =
   "notify + open release", v2 = assisted download/run.
 
-**Next:** Phase 17.
+### Phase 18 — Startup changes report window
+After the launch "while you were away" refresh (Phase 14) finishes, if any
+price/stock changes were detected, show them in a dedicated **report window**
+(a dialog with a small table), in addition to the tray notification. Scope is
+**this startup only** — just the changes between the last shutdown and this
+startup; it does not show historical changes, and it doesn't appear when nothing
+changed. Each row: product, old → new price, and stock change / back-in-stock.
+- Builds on Phase 14: extend the startup batch to collect old→new values (not
+  just names), and open the dialog when that batch finalizes with changes.
+- No deps/schema.
+
+**Next:** Phase 17, then 18.
 
 ---
 
