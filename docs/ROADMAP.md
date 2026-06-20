@@ -96,8 +96,10 @@ price/stock against the values persisted from the last session and notifies
 ### Phase 15 — Telegram notifications
 `TelegramNotifier` ([services/telegram.py](../services/telegram.py)) plugs into
 the NotificationService: self-gating, async (never blocks the UI). Settings →
-Telegram: bot token (stored in keyring), chat ID + enabled (QSettings), and a
-"Send test" button. Token is never logged.
+Telegram: bot token (stored in keyring), chat ID + enabled (QSettings), a
+"Send test" button, and an in-app step-by-step setup guide with clickable
+@BotFather / @userinfobot links. The Settings dialog is scrollable so it never
+squeezes as sections grow. Token is never logged.
 
 ---
 
