@@ -16,9 +16,10 @@ from .generic import GenericAdapter, _parse_price
 
 _TITLE_SELECTORS = ["h1.title", ".titleArea h1", ".product-detail h1"]
 _TITLE_CSS = ", ".join(_TITLE_SELECTORS)
-# Wait for the price (it hydrates after the title on this Vue app), so the
-# rendered DOM actually contains it when we capture the page.
-_WAIT_CSS = ".newPrice ins, .price-wrapper ins, .newPrice"
+# Wait for the actual price node (it hydrates after the title on this Vue app).
+# Must be the <ins> itself, not the .newPrice container — the empty container
+# appears early and would let the wait return before the price text is rendered.
+_WAIT_CSS = ".newPrice ins, .priceContainer ins, .price-wrapper ins"
 _PRICE_SELECTORS = [
     ".newPrice ins",
     ".priceContainer .newPrice",
@@ -47,7 +48,7 @@ class N11Adapter(RetailerAdapter):
     def scrape(self, url: str) -> ProductData:
         clean_url = self.normalize_url(url)
         try:
-            html = get_page_html(clean_url, wait_css=_WAIT_CSS)
+            html = get_page_html(clean_url, wait_css=_WAIT_CSS, settle_seconds=4.0)
         except Exception as exc:
             return ProductData(url=clean_url, error=str(exc))
 

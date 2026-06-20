@@ -115,12 +115,13 @@ def fetch_with_selenium(
         driver.quit()
 
 
-def get_page_html(url: str, *, wait_css: Optional[str] = None) -> str:
+def get_page_html(url: str, *, wait_css: Optional[str] = None,
+                  settle_seconds: float = 2.0) -> str:
     """Selenium-primary fetch with a requests fallback on Windows Chrome failure."""
     if sys.platform.startswith("linux"):
-        return fetch_with_selenium(url, wait_css=wait_css)
+        return fetch_with_selenium(url, wait_css=wait_css, settle_seconds=settle_seconds)
     try:
-        return fetch_with_selenium(url, wait_css=wait_css)
+        return fetch_with_selenium(url, wait_css=wait_css, settle_seconds=settle_seconds)
     except Exception:
         html = fetch_with_requests(url)
         if html:
