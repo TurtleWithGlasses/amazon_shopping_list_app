@@ -242,12 +242,14 @@ class MainWindow(QMainWindow):
         self.table.setItem(row, COL_NAME, name_item)
 
         price_item = QTableWidgetItem(format_price(product.last_price, product.currency))
+        price_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         if product.price_changed and product.prev_price is not None:
             price_item.setForeground(_CHANGED_COLOR)
             price_item.setToolTip(f"Was: {format_price(product.prev_price, product.currency)}")
         self.table.setItem(row, COL_PRICE, price_item)
 
         stock_item = QTableWidgetItem(product.last_stock or "Unknown")
+        stock_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         if product.stock_changed and product.prev_stock:
             stock_item.setForeground(_CHANGED_COLOR)
             stock_item.setToolTip(f"Was: {product.prev_stock}")
@@ -256,7 +258,9 @@ class MainWindow(QMainWindow):
         checked = (
             product.last_checked.strftime("%d %b %Y %H:%M") if product.last_checked else "—"
         )
-        self.table.setItem(row, COL_CHECKED, QTableWidgetItem(checked))
+        checked_item = QTableWidgetItem(checked)
+        checked_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.table.setItem(row, COL_CHECKED, checked_item)
 
         self.table.setCellWidget(row, COL_ACTIONS, self._action_buttons(product.id))
 
