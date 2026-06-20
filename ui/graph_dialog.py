@@ -1,5 +1,5 @@
 """Price / stock history chart with a metric toggle and selectable timescale."""
-from datetime import timezone
+from datetime import datetime, timezone
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt
@@ -88,6 +88,20 @@ class GraphDialog(QDialog):
         else:
             self._plot_price()
 
+    @staticmethod
+    def _fmt_time(ts: float) -> str:
+        return datetime.fromtimestamp(ts).strftime("%d %b %Y %H:%M")
+
+    def _add_hover_points(self, xs, ys, tips) -> None:
+        """Hoverable markers showing `tips[i]` when the cursor is over a point."""
+        scatter = pg.ScatterPlotItem(
+            x=xs, y=ys, size=9,
+            brush=pg.mkBrush(_BRUSH), pen=pg.mkPen("w", width=1),
+            hoverable=True, hoverSize=13, hoverBrush=pg.mkBrush("#e8830c"),
+            data=tips, tip=lambda x, y, data: data,
+        )
+        self.plot.addItem(scatter)
+
     def _plot_price(self) -> None:
         points = [(self._ts(h.captured_at), h.price)
                   for h in self._history() if h.price is not None]
@@ -102,7 +116,10 @@ class GraphDialog(QDialog):
         self._show_empty(False)
         xs = [t for t, _ in points]
         ys = [p for _, p in points]
-        self.plot.plot(xs, ys, pen=_LINE, symbol="o", symbolSize=7, symbolBrush=_BRUSH)
+        self.plot.plot(xs, ys, pen=_LINE)
+        cur = self.product.currency or ""
+        tips = [f"{p:,.2f} {cur}".strip() + f"\n{self._fmt_time(t)}" for t, p in points]
+        self._add_hover_points(xs, ys, tips)
 
     def _plot_stock(self) -> None:
         points = []
@@ -110,7 +127,7 @@ class GraphDialog(QDialog):
             level, _qty = classify_stock(h.stock or "")
             if level is None:
                 continue  # unknown → gap
-            points.append((self._ts(h.captured_at), level))
+            points.append((self._ts(h.captured_at), level, (h.stock or "").strip()))
         self.plot.clear()
         # Categorical Y axis: Out / Limited / In stock.
         self.plot.getAxis("left").setTicks(
@@ -123,15 +140,16 @@ class GraphDialog(QDialog):
         self._show_empty(False)
         # Right-continuous step line: hold each level until the next sample.
         step_x, step_y = [], []
-        for i, (t, level) in enumerate(points):
+        for i, (t, level, _txt) in enumerate(points):
             step_x.append(t)
             step_y.append(level)
             if i + 1 < len(points):
                 step_x.append(points[i + 1][0])
                 step_y.append(level)
         self.plot.plot(step_x, step_y, pen=_LINE)
-        self.plot.plot(
-            [t for t, _ in points], [lv for _, lv in points],
-            pen=None, symbol="o", symbolSize=7, symbolBrush=_BRUSH,
-        )
+        xs = [t for t, _, _ in points]
+        ys = [lv for _, lv, _ in points]
+        tips = [f"{txt or LEVEL_LABELS.get(lv, '')}\n{self._fmt_time(t)}"
+                for t, lv, txt in points]
+        self._add_hover_points(xs, ys, tips)
         self.plot.setYRange(-0.2, 2.2)
