@@ -408,7 +408,11 @@ class MainWindow(QMainWindow):
                 image_url=data.image_url,
             )
             if product is not None:
-                if self._refresh_snapshot:
+                changed = product.price_changed or product.stock_changed
+                # Log history on a full manual snapshot, OR whenever a change is
+                # detected — so the graph captures every price/stock change the
+                # app catches, not just hourly snapshots.
+                if self._refresh_snapshot or changed:
                     repo.record_price_snapshot(
                         product_id, price=product.last_price, stock=product.last_stock
                     )
