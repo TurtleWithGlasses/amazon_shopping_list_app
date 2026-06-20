@@ -12,10 +12,13 @@ from bs4 import BeautifulSoup
 
 from .base import ProductData, RetailerAdapter
 from .browser import get_page_html
-from .generic import _parse_price
+from .generic import GenericAdapter, _parse_price
 
 _TITLE_SELECTORS = ["h1.title", ".titleArea h1", ".product-detail h1"]
 _TITLE_CSS = ", ".join(_TITLE_SELECTORS)
+# Wait for the price (it hydrates after the title on this Vue app), so the
+# rendered DOM actually contains it when we capture the page.
+_WAIT_CSS = ".newPrice ins, .price-wrapper ins, .newPrice"
 _PRICE_SELECTORS = [
     ".newPrice ins",
     ".priceContainer .newPrice",
@@ -44,7 +47,7 @@ class N11Adapter(RetailerAdapter):
     def scrape(self, url: str) -> ProductData:
         clean_url = self.normalize_url(url)
         try:
-            html = get_page_html(clean_url, wait_css=_TITLE_CSS)
+            html = get_page_html(clean_url, wait_css=_WAIT_CSS)
         except Exception as exc:
             return ProductData(url=clean_url, error=str(exc))
 
@@ -82,6 +85,13 @@ class N11Adapter(RetailerAdapter):
             if price is not None:
                 currency = re.sub(r"[\d\s.,]", "", text).strip() or "TL"
                 return price, currency
+        # Fallback: structured data (JSON-LD / Open Graph) from the page head.
+        data = GenericAdapter._from_jsonld(soup)
+        if data.get("price") is not None:
+            return data["price"], data.get("currency") or "TL"
+        og = GenericAdapter._from_opengraph(soup)
+        if og.get("price") is not None:
+            return og["price"], og.get("currency") or "TL"
         return None, ""
 
     @staticmethod
