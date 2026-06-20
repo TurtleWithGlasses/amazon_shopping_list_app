@@ -109,6 +109,9 @@ name, price, currency, availability, and image. Registered as the catch-all
 after Amazon. This covers many stores (Trendyol, Hepsiburada, …) without
 per-site selectors; sites exposing neither return a clear error, and we can add
 a bespoke adapter for those later. Robust price parsing handles US/EU formats.
+First dedicated adapter: **n11** ([core/scraping/n11.py](../core/scraping/n11.py))
+— title, current price (`.newPrice ins`), and gallery image; n11 exposes no
+reliable stock, so it's skipped there.
 
 ---
 

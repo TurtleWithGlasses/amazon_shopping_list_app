@@ -7,11 +7,13 @@ from typing import List, Optional
 from .amazon import AmazonAdapter
 from .base import ProductData, RetailerAdapter
 from .generic import GenericAdapter
+from .n11 import N11Adapter
 
-# Registration order = match priority. Amazon is specific; the generic
+# Registration order = match priority. Site-specific adapters first; the generic
 # structured-data adapter is the catch-all for every other site.
 _ADAPTERS: List[RetailerAdapter] = [
     AmazonAdapter(),
+    N11Adapter(),
     GenericAdapter(),
 ]
 

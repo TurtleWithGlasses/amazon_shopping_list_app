@@ -1,0 +1,96 @@
+"""n11.com retailer adapter.
+
+n11 is a JS-rendered (Vue) site; the rendered DOM is available because we fetch
+with Selenium. Current price is `.newPrice ins` (`.oldPrice` is the pre-discount
+price). Stock/image selectors are best-effort and refined against live pages.
+"""
+import re
+from typing import Optional, Tuple
+from urllib.parse import urlparse
+
+from bs4 import BeautifulSoup
+
+from .base import ProductData, RetailerAdapter
+from .browser import get_page_html
+from .generic import _parse_price
+
+_TITLE_SELECTORS = ["h1.title", ".titleArea h1", ".product-detail h1"]
+_TITLE_CSS = ", ".join(_TITLE_SELECTORS)
+_PRICE_SELECTORS = [
+    ".newPrice ins",
+    ".priceContainer .newPrice",
+    "ins.newPrice",
+    ".price-wrapper ins",
+    ".newPrice",
+]
+_IMAGE_SELECTORS = [
+    ".imageSlider .swiper-slide-active img",
+    ".imageSlider img.swiper-image",
+    ".productHead .imageSlider img",
+    ".left-area img",
+]
+
+
+class N11Adapter(RetailerAdapter):
+    name = "n11"
+
+    def matches(self, url: str) -> bool:
+        return "n11.com" in urlparse(url).netloc.lower()
+
+    def normalize_url(self, url: str) -> str:
+        parsed = urlparse(url)
+        return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"  # drop query/fragment
+
+    def scrape(self, url: str) -> ProductData:
+        clean_url = self.normalize_url(url)
+        try:
+            html = get_page_html(clean_url, wait_css=_TITLE_CSS)
+        except Exception as exc:
+            return ProductData(url=clean_url, error=str(exc))
+
+        soup = BeautifulSoup(html, "lxml")
+        name = self._first_text(soup, _TITLE_SELECTORS)
+        if not name:
+            return ProductData(
+                url=clean_url,
+                error="Could not find the product on n11 (layout may have changed "
+                      "or the listing was removed).",
+            )
+        price, currency = self._extract_price(soup)
+        # n11 product pages don't expose a reliable stock status, so we skip it.
+        return ProductData(
+            url=clean_url, name=name, price=price, currency=currency,
+            stock=None, image_url=self._extract_image(soup),
+        )
+
+    @staticmethod
+    def _first_text(soup, selectors) -> Optional[str]:
+        for sel in selectors:
+            el = soup.select_one(sel)
+            if el and el.get_text(strip=True):
+                return " ".join(el.get_text().split())
+        return None
+
+    @staticmethod
+    def _extract_price(soup) -> Tuple[Optional[float], str]:
+        for sel in _PRICE_SELECTORS:
+            el = soup.select_one(sel)
+            if not el:
+                continue
+            text = el.get_text(strip=True)
+            price = _parse_price(text)
+            if price is not None:
+                currency = re.sub(r"[\d\s.,]", "", text).strip() or "TL"
+                return price, currency
+        return None, ""
+
+    @staticmethod
+    def _extract_image(soup) -> Optional[str]:
+        for sel in _IMAGE_SELECTORS:
+            el = soup.select_one(sel)
+            if el:
+                src = el.get("src") or el.get("data-src") or el.get("data-original")
+                if src and src.startswith("http"):
+                    return src
+        og = soup.find("meta", property="og:image")
+        return og["content"] if og and og.get("content") else None
