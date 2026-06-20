@@ -1,5 +1,5 @@
 """Settings: change account credentials and export data."""
-from PySide6.QtCore import QSettings
+from PySide6.QtCore import Qt, QSettings
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QApplication,
@@ -9,13 +9,16 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QFontDialog,
     QFormLayout,
+    QFrame,
     QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QMessageBox,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
+    QWidget,
 )
 
 from core.cloud import auth
@@ -29,17 +32,26 @@ class SettingsDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Settings")
-        self.setMinimumWidth(440)
-        layout = QVBoxLayout(self)
+        self.resize(560, 640)
+        outer = QVBoxLayout(self)
 
-        layout.addWidget(self._build_appearance_group())
-        layout.addWidget(self._build_account_group())
-        layout.addWidget(self._build_telegram_group())
-        layout.addWidget(self._build_export_group())
+        content = QWidget()
+        inner = QVBoxLayout(content)
+        inner.addWidget(self._build_appearance_group())
+        inner.addWidget(self._build_account_group())
+        inner.addWidget(self._build_telegram_group())
+        inner.addWidget(self._build_export_group())
+        inner.addStretch(1)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
 
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.accept)
-        layout.addWidget(close_button)
+        outer.addWidget(close_button)
 
     # --- appearance --------------------------------------------------------
 
@@ -180,9 +192,25 @@ class SettingsDialog(QDialog):
         box = QGroupBox("Telegram notifications")
         form = QFormLayout(box)
 
-        hint = QLabel("Create a bot with @BotFather, then get your chat ID from @userinfobot.")
-        hint.setWordWrap(True)
-        form.addRow(hint)
+        steps = QLabel(
+            "<b>How to set it up (one time):</b>"
+            "<ol style='margin-left:-24px;'>"
+            "<li>Open <a href='https://t.me/BotFather'>@BotFather</a>, press <b>Start</b>, "
+            "send <b>/newbot</b>, and follow the prompts (a name, then a username ending "
+            "in <i>bot</i>). It replies with your <b>bot token</b> — copy it.</li>"
+            "<li>Open <b>your new bot</b> (tap the t.me link BotFather sends) and press "
+            "<b>Start</b>. A bot can't message you until you message it first.</li>"
+            "<li>Open <a href='https://t.me/userinfobot'>@userinfobot</a>, press <b>Start</b>; "
+            "it replies with your <b>Id</b> — that is your <b>chat ID</b>.</li>"
+            "<li>Paste the <b>bot token</b> and <b>chat ID</b> in the fields below.</li>"
+            "<li>Click <b>Send test</b> — a message should arrive in your bot chat.</li>"
+            "<li>Tick <b>Send notifications to Telegram</b>, then click <b>Save</b>.</li>"
+            "</ol>"
+        )
+        steps.setTextFormat(Qt.TextFormat.RichText)
+        steps.setOpenExternalLinks(True)
+        steps.setWordWrap(True)
+        form.addRow(steps)
 
         self.tg_token = QLineEdit(tg.load_token() or "")
         self.tg_token.setEchoMode(QLineEdit.EchoMode.Password)
