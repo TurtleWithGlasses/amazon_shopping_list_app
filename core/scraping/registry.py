@@ -6,10 +6,13 @@ from typing import List, Optional
 
 from .amazon import AmazonAdapter
 from .base import ProductData, RetailerAdapter
+from .generic import GenericAdapter
 
-# Registration order = match priority. Amazon is the only adapter for now.
+# Registration order = match priority. Amazon is specific; the generic
+# structured-data adapter is the catch-all for every other site.
 _ADAPTERS: List[RetailerAdapter] = [
     AmazonAdapter(),
+    GenericAdapter(),
 ]
 
 

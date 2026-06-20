@@ -101,14 +101,18 @@ Telegram: bot token (stored in keyring), chat ID + enabled (QSettings), a
 @BotFather / @userinfobot links. The Settings dialog is scrollable so it never
 squeezes as sections grow. Token is never logged.
 
+### Phase 16 — Beyond Amazon (generic structured-data adapter)
+A `GenericAdapter` ([core/scraping/generic.py](../core/scraping/generic.py))
+handles any non-Amazon site by reading standardized structured data —
+schema.org JSON-LD `Product` first, then Open Graph / product meta tags — for
+name, price, currency, availability, and image. Registered as the catch-all
+after Amazon. This covers many stores (Trendyol, Hepsiburada, …) without
+per-site selectors; sites exposing neither return a clear error, and we can add
+a bespoke adapter for those later. Robust price parsing handles US/EU formats.
+
 ---
 
 ## Upcoming
-
-### Phase 16 — More e-commerce sites
-One `RetailerAdapter` per site, registered in the registry. Candidates (TR):
-Trendyol, Hepsiburada, n11, MediaMarkt, Vatan; plus eBay. Feasibility is
-per-site (differing layouts, bot detection) — validate and ship one at a time.
 
 ### Phase 17 — Updater & version engine
 - Single `__version__` source shared with `version_info.txt` + installer.
@@ -118,7 +122,7 @@ per-site (differing layouts, bot detection) — validate and ship one at a time.
   downloads hit SmartScreen); replacing a running exe is hard, so v1 =
   "notify + open release", v2 = assisted download/run.
 
-**Suggested order:** 16 → 17.
+**Next:** Phase 17.
 
 ---
 
