@@ -29,12 +29,15 @@ from PySide6.QtWidgets import (
 from core import datastore as repo
 from core.cloud import auth
 from services import export as export_service
+from services.notifications import NotificationService
 from services.scrape_worker import ScrapeTask
+from services.stock import OUT_OF_STOCK, classify_stock
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
 from ui.icons import app_icon
 from ui.image_cache import ImageLoader
+from ui.notifications import TrayChannel
 from ui.settings_dialog import SettingsDialog
 
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
@@ -79,6 +82,12 @@ class MainWindow(QMainWindow):
         self._sort_order = Qt.SortOrder.AscendingOrder
         self._settings = QSettings()
         self._images = ImageLoader(self)
+        self._notifications = NotificationService()
+        # refresh batch state
+        self._refresh_title = "Price / stock changed"
+        self._price_changes = []
+        self._back_in_stock = []
+        self._stock_changes = []
 
         self._build_menu()
         self._build_central()
@@ -352,9 +361,14 @@ class MainWindow(QMainWindow):
 
     def _auto_refresh(self) -> None:
         """5-minute timer: re-scrape all, update display, notify on changes."""
-        self._run_refresh(snapshot=False, notify=True)
+        self._run_refresh(snapshot=False, notify=True, title="Price / stock changed")
 
-    def _run_refresh(self, *, snapshot: bool, notify: bool) -> None:
+    def _startup_check(self) -> None:
+        """One-shot at launch: detect what changed since the last session."""
+        self._run_refresh(snapshot=False, notify=True, title="While you were away")
+
+    def _run_refresh(self, *, snapshot: bool, notify: bool,
+                     title: str = "Price / stock changed") -> None:
         if self._pending_refresh > 0:
             return  # a batch is already running
         products = repo.list_products()
@@ -362,12 +376,24 @@ class MainWindow(QMainWindow):
             return
         self._refresh_snapshot = snapshot
         self._refresh_notify = notify
-        self._refresh_changes = []
+        self._refresh_title = title
+        self._price_changes = []
+        self._back_in_stock = []
+        self._stock_changes = []
         self._pending_refresh = len(products)
         self.refresh_button.setEnabled(False)
         self.statusBar().showMessage(f"Refreshing {self._pending_refresh} product(s)…")
         for product in products:
             self._start_task(product.url, key=product.id, on_finished=self._on_refreshed)
+
+    @staticmethod
+    def _is_back_in_stock(prev_stock, new_stock) -> bool:
+        """True if availability went from out-of-stock to available."""
+        if not prev_stock or not new_stock:
+            return False
+        prev_level, _ = classify_stock(prev_stock)
+        new_level, _ = classify_stock(new_stock)
+        return prev_level == OUT_OF_STOCK and new_level is not None and new_level > OUT_OF_STOCK
 
     def _on_refreshed(self, product_id, data) -> None:
         if data.ok:
@@ -384,28 +410,41 @@ class MainWindow(QMainWindow):
                     repo.record_price_snapshot(
                         product_id, price=product.last_price, stock=product.last_stock
                     )
-                if product.price_changed or product.stock_changed:
-                    self._refresh_changes.append(product.name or product.url)
+                label = product.name or product.url
+                if product.price_changed:
+                    self._price_changes.append(label)
+                if product.stock_changed:
+                    if self._is_back_in_stock(product.prev_stock, product.last_stock):
+                        self._back_in_stock.append(label)
+                    else:
+                        self._stock_changes.append(label)
         self._pending_refresh -= 1
         if self._pending_refresh <= 0:
             self._finalize_refresh()
 
+    @staticmethod
+    def _join(names) -> str:
+        shown = ", ".join(names[:5])
+        return shown + ("…" if len(names) > 5 else "")
+
     def _finalize_refresh(self) -> None:
         self.refresh_button.setEnabled(True)
         self.reload()
-        changed = self._refresh_changes
-        if changed and self._refresh_notify and self._tray_available:
-            summary = ", ".join(changed[:5]) + ("…" if len(changed) > 5 else "")
-            self.tray_icon.showMessage(
-                "Price / stock changed",
-                summary,
-                QSystemTrayIcon.MessageIcon.Information,
-                8000,
-            )
-        if changed:
-            self.statusBar().showMessage(f"Refresh complete — {len(changed)} change(s) detected")
-        else:
-            self.statusBar().showMessage("Refresh complete")
+
+        lines = []
+        if self._back_in_stock:
+            lines.append(f"Back in stock: {self._join(self._back_in_stock)}")
+        if self._price_changes:
+            lines.append(f"Price changed: {self._join(self._price_changes)}")
+        if self._stock_changes:
+            lines.append(f"Stock changed: {self._join(self._stock_changes)}")
+
+        total = len(self._back_in_stock) + len(self._price_changes) + len(self._stock_changes)
+        if lines and self._refresh_notify:
+            self._notifications.notify(self._refresh_title, "\n".join(lines))
+        self.statusBar().showMessage(
+            f"Refresh complete — {total} change(s) detected" if total else "Refresh complete"
+        )
 
     def _take_snapshot(self) -> None:
         """Hourly timer: log current price/stock to history without re-scraping."""
@@ -439,6 +478,10 @@ class MainWindow(QMainWindow):
         self._snapshot_timer.timeout.connect(self._take_snapshot)
         self._snapshot_timer.start(SNAPSHOT_INTERVAL_MS)
 
+        # One-shot "what changed while you were away" check shortly after launch,
+        # so the window is responsive before the (slow) background scrape starts.
+        QTimer.singleShot(1500, self._startup_check)
+
     def _build_tray(self) -> None:
         icon = app_icon()
         if icon.isNull():
@@ -457,6 +500,7 @@ class MainWindow(QMainWindow):
         self.tray_icon.setContextMenu(menu)
         self.tray_icon.activated.connect(self._on_tray_activated)
         self.tray_icon.show()
+        self._notifications.add_channel(TrayChannel(self.tray_icon))
 
     def _restore_layout(self) -> None:
         geometry = self._settings.value("geometry")
