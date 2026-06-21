@@ -6,13 +6,36 @@ also set user_id explicitly on insert to satisfy the RLS check constraint.
 
 Returns lightweight dataclasses with the same attribute names the UI expects.
 """
+import functools
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import urlparse
 
+import httpx
+
 from .auth import current_user_id
 from .client import get_client
+
+
+def _resilient(func):
+    """Retry a Supabase call on transient network errors.
+
+    Supabase's HTTP/2 keep-alive connections can be dropped while idle
+    ("Server disconnected"); retrying issues a fresh request/connection.
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        last_error = None
+        for attempt in range(3):
+            try:
+                return func(*args, **kwargs)
+            except httpx.TransportError as exc:
+                last_error = exc
+                time.sleep(0.4 * (attempt + 1))
+        raise last_error
+    return wrapper
 
 
 @dataclass
@@ -102,6 +125,7 @@ def _next_position(client) -> int:
     return (rows[0]["position"] + 1) if rows and rows[0].get("position") is not None else 1
 
 
+@_resilient
 def add_product(url, name=None, price=None, currency="", stock=None,
                 retailer=None, user_id=None, image_url=None) -> CloudProduct:
     client = get_client()
@@ -125,6 +149,7 @@ def add_product(url, name=None, price=None, currency="", stock=None,
     return _to_product(row)
 
 
+@_resilient
 def list_products(user_id=None) -> List[CloudProduct]:
     # RLS already restricts to the current user.
     rows = (
@@ -134,17 +159,20 @@ def list_products(user_id=None) -> List[CloudProduct]:
     return [_to_product(r) for r in rows]
 
 
+@_resilient
 def reorder_products(ordered_ids: List[int]) -> None:
     client = get_client()
     for index, product_id in enumerate(ordered_ids):
         client.table("products").update({"position": index}).eq("id", product_id).execute()
 
 
+@_resilient
 def get_product(product_id) -> Optional[CloudProduct]:
     rows = get_client().table("products").select("*").eq("id", product_id).limit(1).execute().data
     return _to_product(rows[0]) if rows else None
 
 
+@_resilient
 def update_product(product_id, name=None, url=None) -> Optional[CloudProduct]:
     updates = {}
     if name is not None:
@@ -158,11 +186,13 @@ def update_product(product_id, name=None, url=None) -> Optional[CloudProduct]:
     return _to_product(rows[0]) if rows else None
 
 
+@_resilient
 def delete_product(product_id) -> bool:
     rows = get_client().table("products").delete().eq("id", product_id).execute().data
     return bool(rows)
 
 
+@_resilient
 def apply_scrape_result(product_id, name=None, price=None, currency=None,
                         stock=None, image_url=None) -> Optional[CloudProduct]:
     client = get_client()
@@ -198,6 +228,7 @@ def apply_scrape_result(product_id, name=None, price=None, currency=None,
     return _to_product(updated[0]) if updated else None
 
 
+@_resilient
 def record_price_snapshot(product_id, price=None, stock=None) -> Optional[CloudHistory]:
     rows = get_client().table("price_history").insert(
         {"product_id": product_id, "price": price, "stock": stock}
@@ -205,6 +236,7 @@ def record_price_snapshot(product_id, price=None, stock=None) -> Optional[CloudH
     return _to_history(rows[0]) if rows else None
 
 
+@_resilient
 def get_price_history(product_id, since=None) -> List[CloudHistory]:
     query = get_client().table("price_history").select("*").eq("product_id", product_id)
     if since is not None:

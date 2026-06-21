@@ -399,34 +399,41 @@ class MainWindow(QMainWindow):
 
     def _on_refreshed(self, product_id, data) -> None:
         if data.ok:
-            product = repo.apply_scrape_result(
-                product_id,
-                name=data.name,
-                price=data.price,
-                currency=data.currency,
-                stock=data.stock,
-                image_url=data.image_url,
-            )
-            if product is not None:
-                changed = product.price_changed or product.stock_changed
-                # Log history on a full manual snapshot, OR whenever a change is
-                # detected — so the graph captures every price/stock change the
-                # app catches, not just hourly snapshots.
-                if self._refresh_snapshot or changed:
-                    repo.record_price_snapshot(
-                        product_id, price=product.last_price, stock=product.last_stock
-                    )
-                label = product.name or product.url
-                if product.price_changed:
-                    self._price_changes.append(label)
-                if product.stock_changed:
-                    if self._is_back_in_stock(product.prev_stock, product.last_stock):
-                        self._back_in_stock.append(label)
-                    else:
-                        self._stock_changes.append(label)
+            try:
+                self._apply_refresh_result(product_id, data)
+            except Exception as exc:
+                # A network/DB blip on one product must not break the batch.
+                self.statusBar().showMessage(f"Could not save update: {exc}")
         self._pending_refresh -= 1
         if self._pending_refresh <= 0:
             self._finalize_refresh()
+
+    def _apply_refresh_result(self, product_id, data) -> None:
+        product = repo.apply_scrape_result(
+            product_id,
+            name=data.name,
+            price=data.price,
+            currency=data.currency,
+            stock=data.stock,
+            image_url=data.image_url,
+        )
+        if product is None:
+            return
+        changed = product.price_changed or product.stock_changed
+        # Log history on a full manual snapshot, OR whenever a change is detected
+        # — so the graph captures every price/stock change, not just hourly ones.
+        if self._refresh_snapshot or changed:
+            repo.record_price_snapshot(
+                product_id, price=product.last_price, stock=product.last_stock
+            )
+        label = product.name or product.url
+        if product.price_changed:
+            self._price_changes.append(label)
+        if product.stock_changed:
+            if self._is_back_in_stock(product.prev_stock, product.last_stock):
+                self._back_in_stock.append(label)
+            else:
+                self._stock_changes.append(label)
 
     @staticmethod
     def _join(names) -> str:
