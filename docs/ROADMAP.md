@@ -109,9 +109,16 @@ name, price, currency, availability, and image. Registered as the catch-all
 after Amazon. This covers many stores (Trendyol, Hepsiburada, …) without
 per-site selectors; sites exposing neither return a clear error, and we can add
 a bespoke adapter for those later. Robust price parsing handles US/EU formats.
-First dedicated adapter: **n11** ([core/scraping/n11.py](../core/scraping/n11.py))
-— title, current price (`.newPrice ins`), and gallery image; n11 exposes no
-reliable stock, so it's skipped there.
+Dedicated adapters so far:
+- **n11** ([core/scraping/n11.py](../core/scraping/n11.py)) — title, image, and
+  price read from the embedded JS state (`"priceFloat"`), since the visible
+  price is a bot-gated XHR; no reliable stock, so it's skipped.
+- **Hepsiburada** ([core/scraping/hepsiburada.py](../core/scraping/hepsiburada.py))
+  — uses stable `data-test-id` hooks (classes are hashed) for title/price, with
+  the `data-hbus` JSON price as fallback; best-effort stock.
+- **Trendyol** — *parked.* It actively blocks headless automation (serves an
+  obfuscated anti-bot page); undetected-chromedriver also failed here. Would need
+  a paid scraping API / residential proxy, so it's deferred.
 
 ---
 
