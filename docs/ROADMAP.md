@@ -190,7 +190,29 @@ help). Target the actual cost:
   the resource exhaustion / Chrome crashes from unbounded parallel launches.
 - Keep Chrome as the reliable fallback; no new deps.
 
-**Next:** Phase 21.
+### Phase 22 — Row numbers
+A row-number column (1, 2, 3 …) at the far left, reflecting the **current display
+order** so it updates as the user sorts or reorders rows. Set in `reload()` /
+`_append_row` by enumeration. No deps/schema.
+
+### Phase 23 — Site logo per row
+Show the retailer's logo in a new column **between the move arrows and the
+product image**, driven by `product.retailer` (amazon / n11 / hepsiburada / …).
+- Bundle small, uniform logo assets in `assets/logos/` (one per supported site)
+  with a generic fallback for unknown/`generic` retailers; render like the image
+  cell (scaled QLabel).
+- Gotcha: source/curate the brand marks; keep them small and consistent.
+- No schema (retailer already stored).
+
+### Phase 24 — Per-row refresh button
+A refresh button on each row that re-scrapes **just that product** and updates
+its row — no full "Refresh All".
+- Reuses `ScrapeTask` + `apply_scrape_result` for a single product id; logs a
+  history point on change like the batch refresh; shows a busy/disabled state on
+  that row's button while it runs.
+- No deps/schema.
+
+**Next:** Phase 21 → 22 → 23 → 24.
 
 ---
 
