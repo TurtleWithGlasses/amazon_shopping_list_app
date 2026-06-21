@@ -124,6 +124,9 @@ Dedicated adapters so far:
   class names: title, visible DOM price (`.product-details__sidebar_newprice`),
   `img[data-id=imgMain]` image, best-effort stock. Deliberately ignores the
   JSON-LD price (it's stale/different from the displayed price here).
+- **Sinerji** ([core/scraping/sinerji.py](../core/scraping/sinerji.py)) — clean
+  class names: title (`.pageTitle h1`), price (`.priceWrapper .price` /
+  `.defaultPrice`), carousel image (`data-img`), best-effort stock.
 - **Trendyol** — *parked.* It actively blocks headless automation (serves an
   obfuscated anti-bot page); undetected-chromedriver also failed here. Would need
   a paid scraping API / residential proxy, so it's deferred.

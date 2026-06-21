@@ -11,6 +11,7 @@ from .generic import GenericAdapter
 from .hepsiburada import HepsiburadaAdapter
 from .itopya import ItopyaAdapter
 from .n11 import N11Adapter
+from .sinerji import SinerjiAdapter
 
 # Registration order = match priority. Site-specific adapters first; the generic
 # structured-data adapter is the catch-all for every other site.
@@ -20,6 +21,7 @@ _ADAPTERS: List[RetailerAdapter] = [
     HepsiburadaAdapter(),
     AliExpressAdapter(),
     ItopyaAdapter(),
+    SinerjiAdapter(),
     GenericAdapter(),
 ]
 
