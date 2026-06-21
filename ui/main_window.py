@@ -28,11 +28,13 @@ from PySide6.QtWidgets import (
 
 from core import datastore as repo
 from core.cloud import auth
+from core.version import __version__
 from services import export as export_service
 from services.notifications import NotificationService
 from services.scrape_worker import ScrapeTask
 from services.stock import OUT_OF_STOCK, classify_stock
 from services.telegram import TelegramNotifier
+from services.updater import UpdateCheckTask
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
@@ -112,6 +114,9 @@ class MainWindow(QMainWindow):
         file_menu.addAction(export_xlsx)
 
         file_menu.addSeparator()
+        updates_action = QAction("Check for &updates…", self)
+        updates_action.triggered.connect(lambda: self._check_updates(show_no_update=True))
+        file_menu.addAction(updates_action)
         settings_action = QAction("&Settings…", self)
         settings_action.triggered.connect(self._open_settings)
         file_menu.addAction(settings_action)
@@ -494,6 +499,8 @@ class MainWindow(QMainWindow):
         # One-shot "what changed while you were away" check shortly after launch,
         # so the window is responsive before the (slow) background scrape starts.
         QTimer.singleShot(1500, self._startup_check)
+        # Quiet update check on startup (notifies only if a newer release exists).
+        QTimer.singleShot(4000, lambda: self._check_updates(show_no_update=False))
 
     def _build_tray(self) -> None:
         icon = app_icon()
@@ -564,6 +571,31 @@ class MainWindow(QMainWindow):
         if self.tray_icon is not None:
             self.tray_icon.hide()
         QApplication.instance().quit()
+
+    def _check_updates(self, show_no_update: bool) -> None:
+        task = UpdateCheckTask()
+        task.signals.finished.connect(
+            lambda info: self._on_update_checked(info, show_no_update)
+        )
+        task.signals.finished.connect(partial(self._discard_task, task))
+        self._tasks.append(task)
+        self._pool.start(task)
+
+    def _on_update_checked(self, info, show_no_update: bool) -> None:
+        if info is None:
+            if show_no_update:
+                QMessageBox.information(
+                    self, "Updates",
+                    f"You're on the latest version ({__version__}).",
+                )
+            return
+        answer = QMessageBox.question(
+            self, "Update available",
+            f"Version {info.latest} is available (you have {__version__}).\n"
+            f"Open the download page?",
+        )
+        if answer == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(info.url))
 
     def _open_settings(self) -> None:
         SettingsDialog(self).exec()

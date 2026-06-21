@@ -136,17 +136,17 @@ Dedicated adapters so far:
   obfuscated anti-bot page); undetected-chromedriver also failed here. Would need
   a paid scraping API / residential proxy, so it's deferred.
 
+### Phase 17 — Updater & version engine (v1)
+Single `__version__` source ([core/version.py](../core/version.py)). On startup
+(and via **File → Check for updates…**), a background check queries the GitHub
+Releases "latest" API ([services/updater.py](../services/updater.py)); if a newer
+release exists it offers to open the download page. The startup check is quiet
+(notifies only when an update exists). v2 (assisted auto-download) is deferred —
+it needs code signing to avoid SmartScreen on the downloaded installer.
+
 ---
 
 ## Upcoming
-
-### Phase 17 — Updater & version engine
-- Single `__version__` source shared with `version_info.txt` + installer.
-- Startup check against the GitHub Releases "latest" API; notify with a
-  download/install link. Later: assisted auto-download of the new setup.
-- Deps: `requests` (+ maybe `packaging`). Ties to code signing (unsigned
-  downloads hit SmartScreen); replacing a running exe is hard, so v1 =
-  "notify + open release", v2 = assisted download/run.
 
 ### Phase 18 — Startup changes report window
 After the launch "while you were away" refresh (Phase 14) finishes, if any
@@ -190,7 +190,7 @@ help). Target the actual cost:
   the resource exhaustion / Chrome crashes from unbounded parallel launches.
 - Keep Chrome as the reliable fallback; no new deps.
 
-**Next:** Phase 17 → 18 → 19 → 20 → 21.
+**Next:** Phase 18 → 19 → 20 → 21.
 
 ---
 
