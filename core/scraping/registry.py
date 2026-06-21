@@ -9,6 +9,7 @@ from .amazon import AmazonAdapter
 from .base import ProductData, RetailerAdapter
 from .generic import GenericAdapter
 from .hepsiburada import HepsiburadaAdapter
+from .incehesap import IncehesapAdapter
 from .itopya import ItopyaAdapter
 from .n11 import N11Adapter
 from .sinerji import SinerjiAdapter
@@ -22,6 +23,7 @@ _ADAPTERS: List[RetailerAdapter] = [
     AliExpressAdapter(),
     ItopyaAdapter(),
     SinerjiAdapter(),
+    IncehesapAdapter(),
     GenericAdapter(),
 ]
 

@@ -32,6 +32,11 @@ def _parse_price(value) -> Optional[float]:
             s = s.replace(",", "")
     elif "," in s:
         s = s.replace(".", "").replace(",", ".") if re.search(r",\d{2}$", s) else s.replace(",", "")
+    elif "." in s:
+        # Only periods: a final 3-digit group means a thousands separator
+        # (decimals are 1-2 digits), e.g. Turkish "5.009" = 5009, "12.345.678".
+        if len(s.rsplit(".", 1)[-1]) == 3:
+            s = s.replace(".", "")
     try:
         return float(s)
     except ValueError:

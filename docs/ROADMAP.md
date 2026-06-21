@@ -127,6 +127,11 @@ Dedicated adapters so far:
 - **Sinerji** ([core/scraping/sinerji.py](../core/scraping/sinerji.py)) — clean
   class names: title (`.pageTitle h1`), price (`.priceWrapper .price` /
   `.defaultPrice`), carousel image (`data-img`), best-effort stock.
+- **İncehesap** ([core/scraping/incehesap.py](../core/scraping/incehesap.py)) —
+  microdata hooks (`itemprop` name/price/image) that survive the Tailwind utility
+  classes; price from machine-readable `[itemprop=price]`, relative image URL
+  made absolute. Also fixed the shared price parser to read Turkish thousands
+  without decimals (`5.009` → 5009).
 - **Trendyol** — *parked.* It actively blocks headless automation (serves an
   obfuscated anti-bot page); undetected-chromedriver also failed here. Would need
   a paid scraping API / residential proxy, so it's deferred.
