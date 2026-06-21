@@ -161,7 +161,24 @@ Price and Stock cells: **increase → yellow, decrease → green** (a price drop
 direction = compare classifier levels/quantity (`prev_stock` vs `last_stock`,
 e.g. out→in = increase). No deps/schema.
 
-**Next:** Phase 17 → 18 → 19 → 20.
+### Phase 21 — Scraping performance
+The bottleneck is launching Chrome + rendering JS (~10–30s/product); the DB,
+parsing, and data structures are negligible (so Redis/caching layers wouldn't
+help). Target the actual cost:
+- **`requests`-first / embedded-data fast path:** try a plain HTTP fetch and
+  read the data from the initial HTML (JSON-LD, Open Graph, or embedded JSON
+  like n11's `priceFloat`); only fall back to Chrome when the data isn't there.
+  ~100× faster for sites that allow it.
+- **Persistent browser reuse:** keep one headless Chrome alive and navigate it
+  through a whole "Refresh All" batch instead of starting/stopping Chrome per
+  product (saves ~2–5s startup each).
+- **Block images/CSS/fonts** during scraping (Chrome flags / CDP) so pages load
+  faster — extend the Linux-only image blocking to Windows.
+- **Cap concurrency** to a small fixed limit (e.g. 2–3) — faster *and* avoids
+  the resource exhaustion / Chrome crashes from unbounded parallel launches.
+- Keep Chrome as the reliable fallback; no new deps.
+
+**Next:** Phase 17 → 18 → 19 → 20 → 21.
 
 ---
 
