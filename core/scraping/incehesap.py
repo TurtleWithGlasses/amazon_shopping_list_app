@@ -15,6 +15,8 @@ from .generic import _parse_price
 
 _TITLE_SELECTORS = ['h1[itemprop="name"]', "h1"]
 _TITLE_CSS = 'h1[itemprop="name"]'
+# Alpine.js renders the pricing block after the title — wait for the price text.
+_PRICE_WAIT_CSS = ".price"
 _OUT_PHRASES = ("tükendi", "tukendi", "stokta yok", "stok yok", "temin edilemiyor")
 
 
@@ -31,7 +33,10 @@ class IncehesapAdapter(RetailerAdapter):
     def scrape(self, url: str) -> ProductData:
         clean_url = self.normalize_url(url)
         try:
-            html = get_page_html(clean_url, wait_css=_TITLE_CSS, settle_seconds=2.0)
+            html = get_page_html(
+                clean_url, wait_css=_TITLE_CSS,
+                wait_text_css=_PRICE_WAIT_CSS, settle_seconds=2.0,
+            )
         except Exception as exc:
             return ProductData(url=clean_url, error=str(exc))
 
