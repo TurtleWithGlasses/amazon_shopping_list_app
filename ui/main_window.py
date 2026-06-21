@@ -28,13 +28,13 @@ from PySide6.QtWidgets import (
 
 from core import datastore as repo
 from core.cloud import auth
-from core.version import __version__
+from core.version import GITHUB_REPO, __version__
 from services import export as export_service
 from services.notifications import NotificationService
 from services.scrape_worker import ScrapeTask
 from services.stock import OUT_OF_STOCK, classify_stock
 from services.telegram import TelegramNotifier
-from services.updater import UpdateCheckTask
+from services.updater import DownloadTask, UpdateCheckTask
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.changes_dialog import StartupChangesDialog
 from ui.edit_dialog import EditProductDialog
@@ -68,7 +68,7 @@ def format_price(price, currency: str) -> str:
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Price Tracker")
+        self.setWindowTitle(f"Price Tracker  v{__version__}")
         self.resize(1000, 600)
         self._pool = QThreadPool.globalInstance()
         self._tasks = []          # keep refs so QRunnables aren't GC'd
@@ -120,6 +120,9 @@ class MainWindow(QMainWindow):
         updates_action = QAction("Check for &updates…", self)
         updates_action.triggered.connect(lambda: self._check_updates(show_no_update=True))
         file_menu.addAction(updates_action)
+        about_action = QAction("&About", self)
+        about_action.triggered.connect(self._show_about)
+        file_menu.addAction(about_action)
         settings_action = QAction("&Settings…", self)
         settings_action.triggered.connect(self._open_settings)
         file_menu.addAction(settings_action)
@@ -627,13 +630,69 @@ class MainWindow(QMainWindow):
                     f"You're on the latest version ({__version__}).",
                 )
             return
-        answer = QMessageBox.question(
-            self, "Update available",
-            f"Version {info.latest} is available (you have {__version__}).\n"
-            f"Open the download page?",
+        if info.asset_url:
+            answer = QMessageBox.question(
+                self, "Update available",
+                f"Version {info.latest} is available (you have {__version__}).\n"
+                f"Download and install it now? The app will close to finish installing.",
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                self._download_update(info)
+        else:
+            # No installer attached to the release — fall back to opening the page.
+            answer = QMessageBox.question(
+                self, "Update available",
+                f"Version {info.latest} is available (you have {__version__}).\n"
+                f"Open the download page?",
+            )
+            if answer == QMessageBox.StandardButton.Yes:
+                QDesktopServices.openUrl(QUrl(info.url))
+
+    def _download_update(self, info) -> None:
+        self.statusBar().showMessage("Downloading update… 0%")
+        task = DownloadTask(info.asset_url)
+        task.signals.progress.connect(self._on_update_progress)
+        task.signals.finished.connect(self._on_update_downloaded)
+        task.signals.finished.connect(partial(self._discard_task, task))
+        self._tasks.append(task)
+        self._pool.start(task)
+
+    def _on_update_progress(self, done: int, total: int) -> None:
+        pct = int(done * 100 / total) if total else 0
+        self.statusBar().showMessage(f"Downloading update… {pct}%")
+
+    def _on_update_downloaded(self, path) -> None:
+        if not path:
+            QMessageBox.warning(self, "Update", "The update download failed. Please try again later.")
+            self.statusBar().showMessage("Update download failed")
+            return
+        QMessageBox.information(
+            self, "Update ready",
+            "The installer will open now and Price Tracker will close so the update "
+            "can finish.\n\nIf Windows shows a SmartScreen warning, choose "
+            "\"More info\" → \"Run anyway\".",
         )
-        if answer == QMessageBox.StandardButton.Yes:
-            QDesktopServices.openUrl(QUrl(info.url))
+        try:
+            import subprocess
+            import sys
+            if sys.platform == "win32":
+                os.startfile(path)  # noqa: type-checker (Windows-only)
+            else:
+                subprocess.Popen([path])
+        except Exception as exc:
+            QMessageBox.warning(self, "Update", f"Could not launch the installer:\n{exc}")
+            return
+        self._quit()
+
+    def _show_about(self) -> None:
+        QMessageBox.about(
+            self, "About Price Tracker",
+            f"<b>Price Tracker</b><br>"
+            f"Version {__version__}<br><br>"
+            f"Tracks price &amp; stock across Amazon and other e-commerce sites, "
+            f"with history graphs, change alerts, and Telegram notifications.<br><br>"
+            f"<a href='https://github.com/{GITHUB_REPO}'>github.com/{GITHUB_REPO}</a>",
+        )
 
     def _open_settings(self) -> None:
         SettingsDialog(self).exec()

@@ -1,8 +1,11 @@
-"""Update checker: compares the running version against the latest GitHub release.
+"""Update checker + downloader.
 
-v1 = notify + open the release page. No auto-download yet (that needs code
-signing to avoid SmartScreen — see BUILD.md).
+Checks the latest GitHub release; if newer, can download the attached installer
+(.exe) and hand it to the app to run. Note: the downloaded installer is unsigned,
+so Windows SmartScreen may warn on first run ("More info → Run anyway").
 """
+import os
+import tempfile
 from dataclasses import dataclass
 from typing import Optional, Tuple
 
@@ -11,12 +14,14 @@ from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 from core.version import GITHUB_REPO, __version__
 
 _API = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
+_DOWNLOAD_NAME = "PriceTracker-Update-Setup.exe"
 
 
 @dataclass
 class UpdateInfo:
-    latest: str   # e.g. "0.2.0"
-    url: str      # release page
+    latest: str                      # e.g. "0.2.0"
+    url: str                         # release page
+    asset_url: Optional[str] = None  # direct download URL of the installer .exe
 
 
 def _parse_version(value: str) -> Tuple[int, ...]:
@@ -29,8 +34,8 @@ def _parse_version(value: str) -> Tuple[int, ...]:
 
 
 def check_for_update(timeout: float = 10.0) -> Optional[UpdateInfo]:
-    """Return UpdateInfo if a newer release exists, else None (also on any error
-    or when the repo has no releases yet)."""
+    """Return UpdateInfo if a newer release exists, else None (also on error or
+    when the repo has no releases)."""
     import requests
     try:
         resp = requests.get(
@@ -40,17 +45,38 @@ def check_for_update(timeout: float = 10.0) -> Optional[UpdateInfo]:
             return None
         data = resp.json()
         tag = data.get("tag_name") or data.get("name") or ""
-        if not tag:
+        if not tag or _parse_version(tag) <= _parse_version(__version__):
             return None
-        if _parse_version(tag) > _parse_version(__version__):
-            url = data.get("html_url") or f"https://github.com/{GITHUB_REPO}/releases"
-            return UpdateInfo(latest=tag.lstrip("vV"), url=url)
+        asset_url = None
+        for asset in data.get("assets", []):
+            if (asset.get("name") or "").lower().endswith(".exe"):
+                asset_url = asset.get("browser_download_url")
+                break
+        url = data.get("html_url") or f"https://github.com/{GITHUB_REPO}/releases"
+        return UpdateInfo(latest=tag.lstrip("vV"), url=url, asset_url=asset_url)
     except Exception:
         return None
-    return None
 
 
-class _Signals(QObject):
+def download_installer(asset_url: str, on_progress=None) -> str:
+    """Stream the installer to a temp file; returns its path."""
+    import requests
+    dest = os.path.join(tempfile.gettempdir(), _DOWNLOAD_NAME)
+    with requests.get(asset_url, stream=True, timeout=60) as resp:
+        resp.raise_for_status()
+        total = int(resp.headers.get("Content-Length", 0))
+        done = 0
+        with open(dest, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=65536):
+                if chunk:
+                    f.write(chunk)
+                    done += len(chunk)
+                    if on_progress and total:
+                        on_progress(done, total)
+    return dest
+
+
+class _CheckSignals(QObject):
     finished = Signal(object)  # UpdateInfo | None
 
 
@@ -59,7 +85,7 @@ class UpdateCheckTask(QRunnable):
 
     def __init__(self):
         super().__init__()
-        self.signals = _Signals()
+        self.signals = _CheckSignals()
 
     @Slot()
     def run(self) -> None:
@@ -70,4 +96,33 @@ class UpdateCheckTask(QRunnable):
         try:
             self.signals.finished.emit(info)
         except RuntimeError:
-            pass  # UI gone
+            pass
+
+
+class _DownloadSignals(QObject):
+    progress = Signal(int, int)  # done, total
+    finished = Signal(object)    # path | None
+
+
+class DownloadTask(QRunnable):
+    """Downloads the installer off the GUI thread."""
+
+    def __init__(self, asset_url: str):
+        super().__init__()
+        self.asset_url = asset_url
+        self.signals = _DownloadSignals()
+
+    @Slot()
+    def run(self) -> None:
+        path = None
+        try:
+            path = download_installer(
+                self.asset_url,
+                on_progress=lambda d, t: self.signals.progress.emit(d, t),
+            )
+        except Exception:
+            path = None
+        try:
+            self.signals.finished.emit(path)
+        except RuntimeError:
+            pass

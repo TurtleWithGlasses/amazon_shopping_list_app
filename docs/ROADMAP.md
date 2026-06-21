@@ -136,13 +136,15 @@ Dedicated adapters so far:
   obfuscated anti-bot page); undetected-chromedriver also failed here. Would need
   a paid scraping API / residential proxy, so it's deferred.
 
-### Phase 17 — Updater & version engine (v1)
-Single `__version__` source ([core/version.py](../core/version.py)). On startup
-(and via **File → Check for updates…**), a background check queries the GitHub
-Releases "latest" API ([services/updater.py](../services/updater.py)); if a newer
-release exists it offers to open the download page. The startup check is quiet
-(notifies only when an update exists). v2 (assisted auto-download) is deferred —
-it needs code signing to avoid SmartScreen on the downloaded installer.
+### Phase 17 — Updater & version engine
+Single `__version__` source ([core/version.py](../core/version.py)), shown in the
+window title and a **File → About** dialog. On startup (and via **File → Check
+for updates…**), a background check queries the GitHub Releases "latest" API
+([services/updater.py](../services/updater.py)). If a newer release exists, the
+app **downloads the attached installer (.exe) in the background and runs it**,
+then closes so the install can finish (falls back to opening the release page if
+the release has no installer asset). The downloaded installer is unsigned, so
+SmartScreen may warn ("More info → Run anyway") until code signing is added.
 
 ### Phase 18 — Startup changes report window
 After the launch "while you were away" refresh, if any price/stock changes were
