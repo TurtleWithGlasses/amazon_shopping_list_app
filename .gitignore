@@ -8,6 +8,7 @@ products.json
 # Build artifacts (PyInstaller / installer)
 build/
 dist/
+installer/Output/
 
 # Local databases
 *.db
