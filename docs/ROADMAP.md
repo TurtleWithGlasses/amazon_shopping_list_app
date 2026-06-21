@@ -120,6 +120,10 @@ Dedicated adapters so far:
   — title (`h1[data-pl=product-title]`) + current price via stable class prefix
   (`[class*="price-default--current"]`) and `og:image`; stock skipped. Has
   anti-bot (baxia) that may occasionally serve a challenge instead of the page.
+- **İtopya** ([core/scraping/itopya.py](../core/scraping/itopya.py)) — clean
+  class names: title, visible DOM price (`.product-details__sidebar_newprice`),
+  `img[data-id=imgMain]` image, best-effort stock. Deliberately ignores the
+  JSON-LD price (it's stale/different from the displayed price here).
 - **Trendyol** — *parked.* It actively blocks headless automation (serves an
   obfuscated anti-bot page); undetected-chromedriver also failed here. Would need
   a paid scraping API / residential proxy, so it's deferred.
