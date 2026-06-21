@@ -16,10 +16,11 @@ from .generic import GenericAdapter, _parse_price
 
 _TITLE_SELECTORS = ["h1.title", ".titleArea h1", ".product-detail h1"]
 _TITLE_CSS = ", ".join(_TITLE_SELECTORS)
-# Wait for the actual price node (it hydrates after the title on this Vue app).
-# Must be the <ins> itself, not the .newPrice container — the empty container
-# appears early and would let the wait return before the price text is rendered.
-_WAIT_CSS = ".newPrice ins, .priceContainer ins, .price-wrapper ins"
+# The visible price (.newPrice ins) is filled by a bot-gated XHR (a skeleton
+# shows until then), but the value is embedded in the page's JS state as
+# "priceFloat":<selling price>. The "displayPriceFloat" key (old/list price)
+# does not match this pattern, so the first hit is the main product's price.
+_PRICE_FLOAT_RE = re.compile(r'"priceFloat"\s*:\s*([0-9]+(?:\.[0-9]+)?)')
 _PRICE_SELECTORS = [
     ".newPrice ins",
     ".priceContainer .newPrice",
@@ -48,7 +49,7 @@ class N11Adapter(RetailerAdapter):
     def scrape(self, url: str) -> ProductData:
         clean_url = self.normalize_url(url)
         try:
-            html = get_page_html(clean_url, wait_css=_WAIT_CSS, settle_seconds=4.0)
+            html = get_page_html(clean_url, wait_css=_TITLE_CSS, settle_seconds=2.0)
         except Exception as exc:
             return ProductData(url=clean_url, error=str(exc))
 
@@ -60,7 +61,7 @@ class N11Adapter(RetailerAdapter):
                 error="Could not find the product on n11 (layout may have changed "
                       "or the listing was removed).",
             )
-        price, currency = self._extract_price(soup)
+        price, currency = self._extract_price(html, soup)
         # n11 product pages don't expose a reliable stock status, so we skip it.
         return ProductData(
             url=clean_url, name=name, price=price, currency=currency,
@@ -76,7 +77,12 @@ class N11Adapter(RetailerAdapter):
         return None
 
     @staticmethod
-    def _extract_price(soup) -> Tuple[Optional[float], str]:
+    def _extract_price(html, soup) -> Tuple[Optional[float], str]:
+        # Primary: the selling price embedded in the page's JS state.
+        match = _PRICE_FLOAT_RE.search(html)
+        if match:
+            return float(match.group(1)), "TL"
+        # Fallback: rendered DOM (works if the price XHR completed).
         for sel in _PRICE_SELECTORS:
             el = soup.select_one(sel)
             if not el:
@@ -86,7 +92,7 @@ class N11Adapter(RetailerAdapter):
             if price is not None:
                 currency = re.sub(r"[\d\s.,]", "", text).strip() or "TL"
                 return price, currency
-        # Fallback: structured data (JSON-LD / Open Graph) from the page head.
+        # Last resort: structured data (JSON-LD / Open Graph).
         data = GenericAdapter._from_jsonld(soup)
         if data.get("price") is not None:
             return data["price"], data.get("currency") or "TL"

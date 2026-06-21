@@ -48,6 +48,7 @@ def fetch_with_selenium(
     url: str,
     *,
     wait_css: Optional[str] = None,
+    wait_text_css: Optional[str] = None,
     lang: str = "tr",
     accept_language: str = _DEFAULT_ACCEPT_LANGUAGE,
     settle_seconds: float = 2.0,
@@ -109,6 +110,17 @@ def fetch_with_selenium(
                 )
             except Exception:
                 pass
+        if wait_text_css:
+            # Wait until a matching element has NON-EMPTY text — for values loaded
+            # by a later XHR that show a skeleton placeholder until ready.
+            try:
+                WebDriverWait(driver, 20).until(
+                    lambda d: any(
+                        e.text.strip() for e in d.find_elements(By.CSS_SELECTOR, wait_text_css)
+                    )
+                )
+            except Exception:
+                pass
         time.sleep(settle_seconds)  # let JS-rendered widgets finish
         return driver.page_source
     finally:
@@ -116,12 +128,13 @@ def fetch_with_selenium(
 
 
 def get_page_html(url: str, *, wait_css: Optional[str] = None,
-                  settle_seconds: float = 2.0) -> str:
+                  wait_text_css: Optional[str] = None, settle_seconds: float = 2.0) -> str:
     """Selenium-primary fetch with a requests fallback on Windows Chrome failure."""
+    kwargs = dict(wait_css=wait_css, wait_text_css=wait_text_css, settle_seconds=settle_seconds)
     if sys.platform.startswith("linux"):
-        return fetch_with_selenium(url, wait_css=wait_css, settle_seconds=settle_seconds)
+        return fetch_with_selenium(url, **kwargs)
     try:
-        return fetch_with_selenium(url, wait_css=wait_css, settle_seconds=settle_seconds)
+        return fetch_with_selenium(url, **kwargs)
     except Exception:
         html = fetch_with_requests(url)
         if html:
