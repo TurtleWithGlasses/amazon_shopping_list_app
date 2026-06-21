@@ -47,11 +47,20 @@ def check_for_update(timeout: float = 10.0) -> Optional[UpdateInfo]:
         tag = data.get("tag_name") or data.get("name") or ""
         if not tag or _parse_version(tag) <= _parse_version(__version__):
             return None
-        asset_url = None
-        for asset in data.get("assets", []):
-            if (asset.get("name") or "").lower().endswith(".exe"):
-                asset_url = asset.get("browser_download_url")
-                break
+        # Prefer the self-contained INSTALLER (e.g. PriceTracker-Setup.exe) over a
+        # bare one-folder app exe, which can't run on its own.
+        exe_assets = [
+            (asset.get("name") or "", asset.get("browser_download_url"))
+            for asset in data.get("assets", [])
+            if (asset.get("name") or "").lower().endswith(".exe")
+        ]
+        asset_url = next(
+            (dl for name, dl in exe_assets
+             if "setup" in name.lower() or "install" in name.lower()),
+            None,
+        )
+        if asset_url is None and exe_assets:
+            asset_url = exe_assets[0][1]
         url = data.get("html_url") or f"https://github.com/{GITHUB_REPO}/releases"
         return UpdateInfo(latest=tag.lstrip("vV"), url=url, asset_url=asset_url)
     except Exception:
