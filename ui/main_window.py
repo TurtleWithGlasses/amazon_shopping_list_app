@@ -46,7 +46,9 @@ from ui.notifications import TrayChannel
 from ui.settings_dialog import SettingsDialog
 
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
-_CHANGED_COLOR = QColor("#e8830c")  # orange for changed price/stock
+_INCREASE_COLOR = QColor("#c9a000")  # yellow/gold: price or stock went up
+_DECREASE_COLOR = QColor("#2e9e44")  # green: price or stock went down
+_CHANGED_COLOR = QColor("#e8830c")   # orange: changed, direction indeterminate
 
 COL_MOVE, COL_IMAGE, COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED, COL_ACTIONS = range(7)
 IMG_SIZE = 56    # product thumbnail size (px)
@@ -289,14 +291,14 @@ class MainWindow(QMainWindow):
         price_item = QTableWidgetItem(format_price(product.last_price, product.currency))
         price_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         if product.price_changed and product.prev_price is not None:
-            price_item.setForeground(_CHANGED_COLOR)
+            price_item.setForeground(self._price_change_color(product.prev_price, product.last_price))
             price_item.setToolTip(f"Was: {format_price(product.prev_price, product.currency)}")
         self.table.setItem(row, COL_PRICE, price_item)
 
         stock_item = QTableWidgetItem(product.last_stock or "Unknown")
         stock_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         if product.stock_changed and product.prev_stock:
-            stock_item.setForeground(_CHANGED_COLOR)
+            stock_item.setForeground(self._stock_change_color(product.prev_stock, product.last_stock))
             stock_item.setToolTip(f"Was: {product.prev_stock}")
         self.table.setItem(row, COL_STOCK, stock_item)
 
@@ -308,6 +310,22 @@ class MainWindow(QMainWindow):
         self.table.setItem(row, COL_CHECKED, checked_item)
 
         self.table.setCellWidget(row, COL_ACTIONS, self._action_buttons(product.id))
+
+    @staticmethod
+    def _price_change_color(prev, new) -> QColor:
+        if prev is None or new is None or new == prev:
+            return _CHANGED_COLOR
+        return _INCREASE_COLOR if new > prev else _DECREASE_COLOR
+
+    @staticmethod
+    def _stock_change_color(prev, new) -> QColor:
+        prev_level, prev_qty = classify_stock(prev or "")
+        new_level, new_qty = classify_stock(new or "")
+        if prev_level is not None and new_level is not None and prev_level != new_level:
+            return _INCREASE_COLOR if new_level > prev_level else _DECREASE_COLOR
+        if prev_qty is not None and new_qty is not None and prev_qty != new_qty:
+            return _INCREASE_COLOR if new_qty > prev_qty else _DECREASE_COLOR
+        return _CHANGED_COLOR  # changed but direction indeterminate
 
     def _action_buttons(self, product_id: int) -> QWidget:
         widget = QWidget()

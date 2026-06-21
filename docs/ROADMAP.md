@@ -163,16 +163,15 @@ A dropdown in the toolbar (5 / 15 / 30 minutes / 1 hour) for the auto-refresh
 interval. Changing it takes effect **immediately** (restarts the refresh
 `QTimer`), is persisted in `QSettings`, and is restored on launch.
 
+### Phase 20 — Directional change colors
+Price/Stock cells are colored by direction: **increase → yellow, decrease →
+green** (orange when changed but direction is indeterminate). Price compares
+`last_price` vs `prev_price`; stock compares the classifier level (out→in =
+increase), then quantity as a tiebreaker.
+
 ---
 
 ## Upcoming
-
-### Phase 20 — Directional change colors
-Replace the single orange "changed" color with direction-aware colors in the
-Price and Stock cells: **increase → yellow, decrease → green** (a price drop is
-"good", so green). Price direction = compare `last_price` vs `prev_price`; stock
-direction = compare classifier levels/quantity (`prev_stock` vs `last_stock`,
-e.g. out→in = increase). No deps/schema.
 
 ### Phase 21 — Scraping performance
 The bottleneck is launching Chrome + rendering JS (~10–30s/product); the DB,
@@ -191,7 +190,7 @@ help). Target the actual cost:
   the resource exhaustion / Chrome crashes from unbounded parallel launches.
 - Keep Chrome as the reliable fallback; no new deps.
 
-**Next:** Phase 20 → 21.
+**Next:** Phase 21.
 
 ---
 
