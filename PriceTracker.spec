@@ -19,6 +19,12 @@ if os.path.isdir("assets/fonts"):
         if _f.lower().endswith((".ttf", ".otf")):
             datas += [(os.path.join("assets/fonts", _f), "assets/fonts")]
 
+# Bundle the per-row retailer logos (top-level PNGs only; skip the _src originals).
+if os.path.isdir("assets/logos"):
+    for _f in os.listdir("assets/logos"):
+        if _f.lower().endswith(".png"):
+            datas += [(os.path.join("assets/logos", _f), "assets/logos")]
+
 # Bundle the Supabase config (URL + anon key) so the installed app is cloud-
 # enabled on any machine. The anon key is safe to ship — row-level security
 # protects the data; never put the service_role key here.

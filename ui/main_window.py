@@ -42,6 +42,7 @@ from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
 from ui.icons import app_icon
 from ui.image_cache import ImageLoader
+from ui.logos import logo_key, logo_pixmap
 from ui.notifications import TrayChannel
 from ui.settings_dialog import SettingsDialog
 
@@ -50,8 +51,20 @@ _INCREASE_COLOR = QColor("#c9a000")  # yellow/gold: price or stock went up
 _DECREASE_COLOR = QColor("#2e9e44")  # green: price or stock went down
 _CHANGED_COLOR = QColor("#e8830c")   # orange: changed, direction indeterminate
 
-COL_MOVE, COL_IMAGE, COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED, COL_ACTIONS = range(7)
+(COL_NUM, COL_MOVE, COL_LOGO, COL_IMAGE, COL_NAME,
+ COL_PRICE, COL_STOCK, COL_CHECKED, COL_STATUS, COL_ACTIONS) = range(10)
+COLUMN_COUNT = 10
+_ROW_NUM_COLOR = QColor("#888888")  # muted index numbers, readable on light/dark
+
+# Per-row fetch status (glyph, color, tooltip default) keyed by state name.
+_STATUS_STYLES = {
+    "idle": ("", "#888888", ""),
+    "refreshing": ("⟳", "#c9a000", "Refreshing…"),
+    "ok": ("✓", "#2e9e44", "Updated"),
+    "error": ("✗", "#cc3b3b", "Refresh failed"),
+}
 IMG_SIZE = 56    # product thumbnail size (px)
+LOGO_W, LOGO_H = 72, 36  # retailer logo cell box (px); aspect kept within it
 ROW_HEIGHT = 70  # row height; leaves margin around the thumbnail
 
 # Auto-refresh interval options (label, milliseconds). First is the default.
@@ -81,6 +94,10 @@ class MainWindow(QMainWindow):
         self._pool = QThreadPool.globalInstance()
         self._tasks = []          # keep refs so QRunnables aren't GC'd
         self._pending_refresh = 0
+        # Per-row widgets, keyed by product id (rebuilt on every reload()).
+        self._status_cells = {}        # product id -> status QLabel
+        self._row_refresh_buttons = {}  # product id -> per-row Refresh button
+        self._single_active = set()    # ids with a single-row refresh in flight
         self._really_quit = False
         self.logout_requested = False
         self._tray_available = False
@@ -175,9 +192,10 @@ class MainWindow(QMainWindow):
         layout.addLayout(add_bar)
 
         # Table
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, COLUMN_COUNT)
         self.table.setHorizontalHeaderLabels(
-            ["", "", "Product", "Price", "Stock", "Last checked", "Actions"]
+            ["#", "", "", "", "Product", "Price", "Stock", "Last checked",
+             "Status", "Actions"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
@@ -188,11 +206,12 @@ class MainWindow(QMainWindow):
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         # All columns user-resizable; saved widths are restored in _restore_layout.
-        for col in range(7):
+        for col in range(COLUMN_COUNT):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         for col, width in (
-            (COL_MOVE, 84), (COL_IMAGE, 74), (COL_NAME, 320), (COL_PRICE, 110),
-            (COL_STOCK, 150), (COL_CHECKED, 140), (COL_ACTIONS, 280),
+            (COL_NUM, 38), (COL_MOVE, 84), (COL_LOGO, 84), (COL_IMAGE, 74),
+            (COL_NAME, 320), (COL_PRICE, 110), (COL_STOCK, 150),
+            (COL_CHECKED, 140), (COL_STATUS, 64), (COL_ACTIONS, 340),
         ):
             self.table.setColumnWidth(col, width)
         header.setSectionsClickable(True)
@@ -216,6 +235,8 @@ class MainWindow(QMainWindow):
     def reload(self) -> None:
         products = self._sort_products(repo.list_products())
         self.table.setRowCount(0)
+        self._status_cells = {}
+        self._row_refresh_buttons = {}
         for product in products:
             self._append_row(product)
         self.statusBar().showMessage(f"{len(products)} product(s) tracked")
@@ -271,7 +292,21 @@ class MainWindow(QMainWindow):
         row = self.table.rowCount()
         self.table.insertRow(row)
 
+        num_item = QTableWidgetItem(str(row + 1))  # 1-based display position
+        num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        num_item.setForeground(_ROW_NUM_COLOR)
+        num_item.setFlags(num_item.flags() & ~Qt.ItemFlag.ItemIsSelectable)
+        self.table.setItem(row, COL_NUM, num_item)
+
         self.table.setCellWidget(row, COL_MOVE, self._move_buttons(product.id))
+
+        logo_label = QLabel()
+        logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        pixmap = logo_pixmap(product, LOGO_W, LOGO_H)
+        if pixmap is not None:
+            logo_label.setPixmap(pixmap)
+        logo_label.setToolTip(logo_key(product))
+        self.table.setCellWidget(row, COL_LOGO, logo_label)
 
         image_label = QLabel()
         image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -309,6 +344,11 @@ class MainWindow(QMainWindow):
         checked_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, COL_CHECKED, checked_item)
 
+        status_label = QLabel()
+        status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.table.setCellWidget(row, COL_STATUS, status_label)
+        self._status_cells[product.id] = status_label
+
         self.table.setCellWidget(row, COL_ACTIONS, self._action_buttons(product.id))
 
     @staticmethod
@@ -327,10 +367,26 @@ class MainWindow(QMainWindow):
             return _INCREASE_COLOR if new_qty > prev_qty else _DECREASE_COLOR
         return _CHANGED_COLOR  # changed but direction indeterminate
 
+    def _set_row_status(self, product_id, state: str, tooltip: str = None) -> None:
+        """Update a row's fetch indicator (idle/refreshing/ok/error)."""
+        label = self._status_cells.get(product_id)
+        if label is None:
+            return
+        glyph, color, default_tip = _STATUS_STYLES[state]
+        label.setText(glyph)
+        label.setStyleSheet(f"color: {color}; font-size: 15px; font-weight: bold;")
+        label.setToolTip(default_tip if tooltip is None else tooltip)
+
     def _action_buttons(self, product_id: int) -> QWidget:
         widget = QWidget()
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(2, 2, 2, 2)
+        refresh_btn = QPushButton("Refresh")
+        refresh_btn.setToolTip("Re-scrape just this product")
+        refresh_btn.clicked.connect(partial(self._refresh_one, product_id))
+        refresh_btn.setEnabled(self._pending_refresh == 0)  # disabled mid-batch
+        layout.addWidget(refresh_btn)
+        self._row_refresh_buttons[product_id] = refresh_btn
         for label, handler in (
             ("Graph", self._show_graph),
             ("Edit", self._edit_product),
@@ -403,6 +459,41 @@ class MainWindow(QMainWindow):
         """Manual refresh: re-scrape all + log a history point per product."""
         self._run_refresh(snapshot=True, notify=False)
 
+    def _refresh_one(self, product_id) -> None:
+        """Re-scrape a single product without touching the rest of the table."""
+        if self._pending_refresh > 0 or product_id in self._single_active:
+            return  # a batch is running, or this row is already refreshing
+        product = repo.get_product(product_id)
+        if product is None:
+            return
+        self._single_active.add(product_id)
+        button = self._row_refresh_buttons.get(product_id)
+        if button is not None:
+            button.setEnabled(False)
+        self._set_row_status(product_id, "refreshing")
+        self.statusBar().showMessage(f"Refreshing {product.name or product.url}…")
+        self._start_task(product.url, key=product_id, on_finished=self._on_one_refreshed)
+
+    def _on_one_refreshed(self, product_id, data) -> None:
+        self._single_active.discard(product_id)
+        ok, message = data.ok, None
+        if data.ok:
+            try:
+                self._persist_scrape(product_id, data, snapshot=True)
+            except Exception as exc:
+                ok, message = False, str(exc)
+        else:
+            message = data.error or "Scrape failed"
+        # reload() rebuilds rows (new price/stock + a fresh, enabled button) and
+        # resets status cells; re-apply this row's result indicator afterwards.
+        self.reload()
+        if ok:
+            self._set_row_status(product_id, "ok")
+            self.statusBar().showMessage("Refresh complete")
+        else:
+            self._set_row_status(product_id, "error", message)
+            self.statusBar().showMessage(f"Refresh failed: {message}")
+
     def _auto_refresh(self) -> None:
         """5-minute timer: re-scrape all, update display, notify on changes."""
         self._run_refresh(snapshot=False, notify=True, title="Price / stock changed")
@@ -430,6 +521,10 @@ class MainWindow(QMainWindow):
         self._refresh_events = []
         self._pending_refresh = len(products)
         self.refresh_button.setEnabled(False)
+        for button in self._row_refresh_buttons.values():
+            button.setEnabled(False)  # no single-row refresh mid-batch
+        for product in products:
+            self._set_row_status(product.id, "refreshing")
         self.statusBar().showMessage(f"Refreshing {self._pending_refresh} product(s)…")
         for product in products:
             self._start_task(product.url, key=product.id, on_finished=self._on_refreshed)
@@ -447,14 +542,23 @@ class MainWindow(QMainWindow):
         if data.ok:
             try:
                 self._apply_refresh_result(product_id, data)
+                self._set_row_status(product_id, "ok")
             except Exception as exc:
                 # A network/DB blip on one product must not break the batch.
+                self._set_row_status(product_id, "error", str(exc))
                 self.statusBar().showMessage(f"Could not save update: {exc}")
+        else:
+            self._set_row_status(product_id, "error", data.error or "Scrape failed")
         self._pending_refresh -= 1
         if self._pending_refresh <= 0:
             self._finalize_refresh()
 
-    def _apply_refresh_result(self, product_id, data) -> None:
+    def _persist_scrape(self, product_id, data, *, snapshot: bool):
+        """Apply one scrape result to the store and log history when warranted.
+
+        Shared by the batch refresh and the per-row refresh. Returns
+        ``(product, changed, back_in_stock)`` or ``(None, False, False)``.
+        """
         product = repo.apply_scrape_result(
             product_id,
             name=data.name,
@@ -464,17 +568,25 @@ class MainWindow(QMainWindow):
             image_url=data.image_url,
         )
         if product is None:
-            return
+            return None, False, False
         changed = product.price_changed or product.stock_changed
-        # Log history on a full manual snapshot, OR whenever a change is detected
-        # — so the graph captures every price/stock change, not just hourly ones.
-        if self._refresh_snapshot or changed:
+        # Log history on a manual snapshot, OR whenever a change is detected — so
+        # the graph captures every price/stock change, not just hourly ones.
+        if snapshot or changed:
             repo.record_price_snapshot(
                 product_id, price=product.last_price, stock=product.last_stock
             )
-        label = product.name or product.url
         back = bool(product.stock_changed
                     and self._is_back_in_stock(product.prev_stock, product.last_stock))
+        return product, changed, back
+
+    def _apply_refresh_result(self, product_id, data) -> None:
+        product, changed, back = self._persist_scrape(
+            product_id, data, snapshot=self._refresh_snapshot
+        )
+        if product is None:
+            return
+        label = product.name or product.url
         if product.price_changed:
             self._price_changes.append(label)
         if product.stock_changed:
@@ -606,7 +718,7 @@ class MainWindow(QMainWindow):
             self.restoreGeometry(geometry)
         # _v2: layout defaults changed (taller rows, wider columns), so old saved
         # column widths are intentionally ignored.
-        header_state = self._settings.value("header_state_v4")
+        header_state = self._settings.value("header_state_v7")
         if header_state is not None:
             self.table.horizontalHeader().restoreState(header_state)
         close_to_tray = self._settings.value("close_to_tray", True, type=bool)
@@ -640,7 +752,7 @@ class MainWindow(QMainWindow):
 
     def _save_layout(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
-        self._settings.setValue("header_state_v4", self.table.horizontalHeader().saveState())
+        self._settings.setValue("header_state_v7", self.table.horizontalHeader().saveState())
         self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
         self._settings.setValue("sort_column", -1 if self._sort_column is None else self._sort_column)
         self._settings.setValue("sort_order", self._sort_order.value)

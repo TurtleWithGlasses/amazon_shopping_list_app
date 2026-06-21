@@ -169,6 +169,24 @@ green** (orange when changed but direction is indeterminate). Price compares
 `last_price` vs `prev_price`; stock compares the classifier level (out→in =
 increase), then quantity as a tiebreaker.
 
+### Phase 22 — Row numbers
+A `#` column at the far left showing each row's 1-based **display position**
+(muted gray), set in `_append_row` from the append order so it re-sequences
+automatically on sort/reorder. (Done before Phase 21.)
+
+### Phase 23 — Site logo per row
+Retailer logo column **between the move arrows and the product image**, mapped
+via the scraper registry (`get_adapter(url).name`) to a bundled PNG in
+`assets/logos/`, with `generic.png` as the fallback. `ui/logos.py` caches scaled
+pixmaps; `scripts/normalize_logos.py` trims + uniform-scales the raw originals.
+
+### Phase 24 — Per-row refresh + status indicator
+A **Refresh** button on each row (`_refresh_one`) re-scrapes just that product
+and updates only its row, plus a **Status** column indicator: `⟳` refreshing →
+`✓` done / `✗` error (tooltip shows the reason). Works for "Refresh All" too —
+rows flip to ✓/✗ live as each async task finishes. Batch and single refresh
+share `_persist_scrape`; single-row refresh is gated while a batch runs.
+
 ---
 
 ## Upcoming
@@ -190,29 +208,7 @@ help). Target the actual cost:
   the resource exhaustion / Chrome crashes from unbounded parallel launches.
 - Keep Chrome as the reliable fallback; no new deps.
 
-### Phase 22 — Row numbers
-A row-number column (1, 2, 3 …) at the far left, reflecting the **current display
-order** so it updates as the user sorts or reorders rows. Set in `reload()` /
-`_append_row` by enumeration. No deps/schema.
-
-### Phase 23 — Site logo per row
-Show the retailer's logo in a new column **between the move arrows and the
-product image**, driven by `product.retailer` (amazon / n11 / hepsiburada / …).
-- Bundle small, uniform logo assets in `assets/logos/` (one per supported site)
-  with a generic fallback for unknown/`generic` retailers; render like the image
-  cell (scaled QLabel).
-- Gotcha: source/curate the brand marks; keep them small and consistent.
-- No schema (retailer already stored).
-
-### Phase 24 — Per-row refresh button
-A refresh button on each row that re-scrapes **just that product** and updates
-its row — no full "Refresh All".
-- Reuses `ScrapeTask` + `apply_scrape_result` for a single product id; logs a
-  history point on change like the batch refresh; shows a busy/disabled state on
-  that row's button while it runs.
-- No deps/schema.
-
-**Next:** Phase 21 → 22 → 23 → 24.
+**Next:** Phase 21.
 
 ---
 
