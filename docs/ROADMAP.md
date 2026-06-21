@@ -208,6 +208,30 @@ help). Target the actual cost:
   the resource exhaustion / Chrome crashes from unbounded parallel launches.
 - Keep Chrome as the reliable fallback; no new deps.
 
+### Phase 25 — Auth confirmation email + post-confirmation page
+Polish the sign-up confirmation experience (Supabase Auth):
+- **Confirmation email:** a proper branded HTML template — Price Tracker name +
+  cart logo, clear "Confirm your email" CTA button, plain-text fallback, sane
+  subject/sender. Configured in the Supabase dashboard (Auth → Email Templates)
+  using its template variables (`{{ .ConfirmationURL }}` etc.).
+- **After-confirmation page:** the link currently lands on a bare/default page.
+  Point Supabase's redirect at a small branded "Email confirmed — you can now
+  sign in to Price Tracker" page (or a clear in-app deep-link/message) instead.
+- Mostly dashboard config + a static page; no app code beyond the redirect URL.
+
+### Phase 26 — Consistent row selection highlight
+Selecting a row highlights the plain text cells blue, but the **widget cells
+don't follow** — move arrows, logo, image, status, and the Actions buttons keep
+their default background (see screenshot), so a selected row looks patchy.
+- Cause: `setCellWidget` cells paint the widget over the cell, so the table's
+  selection brush never shows through.
+- Fix options: make widget containers transparent and let the row brush show
+  (`setAutoFillBackground(False)` + transparent stylesheet), **or** drive the
+  selection color via the table's stylesheet / a custom delegate / a
+  `selectionChanged` handler that tints each row's widgets to match.
+- Goal: the entire row (including widget columns) reads as one consistent
+  selection. UI-only; no schema.
+
 **Next:** Phase 21.
 
 ---
