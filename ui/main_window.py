@@ -36,6 +36,7 @@ from services.stock import OUT_OF_STOCK, classify_stock
 from services.telegram import TelegramNotifier
 from services.updater import UpdateCheckTask
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
+from ui.changes_dialog import StartupChangesDialog
 from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
 from ui.icons import app_icon
@@ -89,9 +90,11 @@ class MainWindow(QMainWindow):
         self._notifications.add_channel(TelegramNotifier())  # self-gates until configured
         # refresh batch state
         self._refresh_title = "Price / stock changed"
+        self._refresh_report = False  # open the changes report window on finalize
         self._price_changes = []
         self._back_in_stock = []
         self._stock_changes = []
+        self._refresh_events = []  # detailed change records for the report window
 
         self._build_menu()
         self._build_central()
@@ -371,11 +374,13 @@ class MainWindow(QMainWindow):
         self._run_refresh(snapshot=False, notify=True, title="Price / stock changed")
 
     def _startup_check(self) -> None:
-        """One-shot at launch: detect what changed since the last session."""
-        self._run_refresh(snapshot=False, notify=True, title="While you were away")
+        """One-shot at launch: detect what changed since the last session and
+        report it in a window."""
+        self._run_refresh(snapshot=False, notify=True,
+                          title="While you were away", report=True)
 
     def _run_refresh(self, *, snapshot: bool, notify: bool,
-                     title: str = "Price / stock changed") -> None:
+                     title: str = "Price / stock changed", report: bool = False) -> None:
         if self._pending_refresh > 0:
             return  # a batch is already running
         products = repo.list_products()
@@ -384,9 +389,11 @@ class MainWindow(QMainWindow):
         self._refresh_snapshot = snapshot
         self._refresh_notify = notify
         self._refresh_title = title
+        self._refresh_report = report
         self._price_changes = []
         self._back_in_stock = []
         self._stock_changes = []
+        self._refresh_events = []
         self._pending_refresh = len(products)
         self.refresh_button.setEnabled(False)
         self.statusBar().showMessage(f"Refreshing {self._pending_refresh} product(s)…")
@@ -432,13 +439,24 @@ class MainWindow(QMainWindow):
                 product_id, price=product.last_price, stock=product.last_stock
             )
         label = product.name or product.url
+        back = bool(product.stock_changed
+                    and self._is_back_in_stock(product.prev_stock, product.last_stock))
         if product.price_changed:
             self._price_changes.append(label)
         if product.stock_changed:
-            if self._is_back_in_stock(product.prev_stock, product.last_stock):
-                self._back_in_stock.append(label)
-            else:
-                self._stock_changes.append(label)
+            (self._back_in_stock if back else self._stock_changes).append(label)
+        if changed:
+            self._refresh_events.append({
+                "name": label,
+                "currency": product.currency,
+                "price_changed": product.price_changed,
+                "prev_price": product.prev_price,
+                "last_price": product.last_price,
+                "stock_changed": product.stock_changed,
+                "prev_stock": product.prev_stock,
+                "last_stock": product.last_stock,
+                "back_in_stock": back,
+            })
 
     @staticmethod
     def _join(names) -> str:
@@ -463,6 +481,26 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Refresh complete — {total} change(s) detected" if total else "Refresh complete"
         )
+
+        # Startup report window: only for the launch batch, only if changes.
+        if self._refresh_report and self._refresh_events:
+            rows = [self._event_row(e) for e in self._refresh_events]
+            self._changes_dialog = StartupChangesDialog(rows, parent=self)
+            self._changes_dialog.show()
+
+    def _event_row(self, event) -> tuple:
+        if event["price_changed"] and event["prev_price"] is not None:
+            price_text = (f"{format_price(event['prev_price'], event['currency'])}"
+                          f" → {format_price(event['last_price'], event['currency'])}")
+        else:
+            price_text = "—"
+        if event["back_in_stock"]:
+            stock_text = "Back in stock"
+        elif event["stock_changed"]:
+            stock_text = f"{event['prev_stock'] or '—'} → {event['last_stock'] or '—'}"
+        else:
+            stock_text = "—"
+        return (event["name"], price_text, stock_text)
 
     def _take_snapshot(self) -> None:
         """Hourly timer: log current price/stock to history without re-scraping."""

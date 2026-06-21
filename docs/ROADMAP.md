@@ -144,20 +144,17 @@ release exists it offers to open the download page. The startup check is quiet
 (notifies only when an update exists). v2 (assisted auto-download) is deferred —
 it needs code signing to avoid SmartScreen on the downloaded installer.
 
+### Phase 18 — Startup changes report window
+After the launch "while you were away" refresh, if any price/stock changes were
+detected, a report window ([ui/changes_dialog.py](../ui/changes_dialog.py)) lists
+them in a table — product, old → new price, and stock / back-in-stock — alongside
+the tray notification. Scope is **this startup only** (changes between last
+shutdown and this launch); it doesn't show history and doesn't appear when
+nothing changed. The 5-minute refresh still only notifies (no window).
+
 ---
 
 ## Upcoming
-
-### Phase 18 — Startup changes report window
-After the launch "while you were away" refresh (Phase 14) finishes, if any
-price/stock changes were detected, show them in a dedicated **report window**
-(a dialog with a small table), in addition to the tray notification. Scope is
-**this startup only** — just the changes between the last shutdown and this
-startup; it does not show historical changes, and it doesn't appear when nothing
-changed. Each row: product, old → new price, and stock change / back-in-stock.
-- Builds on Phase 14: extend the startup batch to collect old→new values (not
-  just names), and open the dialog when that batch finalizes with changes.
-- No deps/schema.
 
 ### Phase 19 — Configurable refresh interval
 A dropdown (5 min / 15 min / 30 min / 1 hour) for the auto-refresh interval.
@@ -190,7 +187,7 @@ help). Target the actual cost:
   the resource exhaustion / Chrome crashes from unbounded parallel launches.
 - Keep Chrome as the reliable fallback; no new deps.
 
-**Next:** Phase 18 → 19 → 20 → 21.
+**Next:** Phase 19 → 20 → 21.
 
 ---
 
