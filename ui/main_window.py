@@ -7,6 +7,7 @@ from PySide6.QtGui import QAction, QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFileDialog,
     QHBoxLayout,
     QHeaderView,
@@ -51,8 +52,13 @@ COL_MOVE, COL_IMAGE, COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED, COL_ACTIONS = 
 IMG_SIZE = 56    # product thumbnail size (px)
 ROW_HEIGHT = 70  # row height; leaves margin around the thumbnail
 
-# Timer intervals (overridable via env vars for testing).
-REFRESH_INTERVAL_MS = int(os.environ.get("PRICETRACKER_REFRESH_MS", 5 * 60 * 1000))      # 5 min
+# Auto-refresh interval options (label, milliseconds). First is the default.
+REFRESH_INTERVAL_OPTIONS = [
+    ("5 minutes", 5 * 60 * 1000),
+    ("15 minutes", 15 * 60 * 1000),
+    ("30 minutes", 30 * 60 * 1000),
+    ("1 hour", 60 * 60 * 1000),
+]
 SNAPSHOT_INTERVAL_MS = int(os.environ.get("PRICETRACKER_SNAPSHOT_MS", 60 * 60 * 1000))   # 1 hour
 
 
@@ -154,9 +160,16 @@ class MainWindow(QMainWindow):
         self.add_button.clicked.connect(self._add_product)
         self.refresh_button = QPushButton("Refresh All")
         self.refresh_button.clicked.connect(self._refresh_all)
+        self.interval_combo = QComboBox()
+        for label, ms in REFRESH_INTERVAL_OPTIONS:
+            self.interval_combo.addItem(label, ms)
+        self.interval_combo.setToolTip("How often to automatically re-check all products.")
+        self.interval_combo.currentIndexChanged.connect(self._on_interval_changed)
         add_bar.addWidget(self.url_input, 1)
         add_bar.addWidget(self.add_button)
         add_bar.addWidget(self.refresh_button)
+        add_bar.addWidget(QLabel("Auto-refresh:"))
+        add_bar.addWidget(self.interval_combo)
         layout.addLayout(add_bar)
 
         # Table
@@ -531,7 +544,7 @@ class MainWindow(QMainWindow):
     def _start_timers(self) -> None:
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._auto_refresh)
-        self._refresh_timer.start(REFRESH_INTERVAL_MS)
+        self._refresh_timer.start(self.interval_combo.currentData())
 
         self._snapshot_timer = QTimer(self)
         self._snapshot_timer.timeout.connect(self._take_snapshot)
@@ -541,6 +554,13 @@ class MainWindow(QMainWindow):
         # once). Refreshing happens on the periodic timer or via "Refresh All".
         # Quiet update check on startup (notifies only if a newer release exists).
         QTimer.singleShot(4000, lambda: self._check_updates(show_no_update=False))
+
+    def _on_interval_changed(self) -> None:
+        ms = self.interval_combo.currentData()
+        self._settings.setValue("refresh_interval_ms", ms)
+        if hasattr(self, "_refresh_timer"):
+            self._refresh_timer.start(ms)  # applies immediately
+        self.statusBar().showMessage(f"Auto-refresh every {self.interval_combo.currentText()}")
 
     def _build_tray(self) -> None:
         icon = app_icon()
@@ -574,6 +594,17 @@ class MainWindow(QMainWindow):
         close_to_tray = self._settings.value("close_to_tray", True, type=bool)
         self.tray_checkbox.setChecked(bool(close_to_tray) and self._tray_available)
         self.tray_checkbox.setEnabled(self._tray_available)
+
+        saved_interval = self._settings.value("refresh_interval_ms")
+        if saved_interval is not None:
+            try:
+                idx = self.interval_combo.findData(int(saved_interval))
+            except (TypeError, ValueError):
+                idx = -1
+            if idx >= 0:
+                self.interval_combo.blockSignals(True)
+                self.interval_combo.setCurrentIndex(idx)
+                self.interval_combo.blockSignals(False)
 
         try:
             sort_col = int(self._settings.value("sort_column", -1))

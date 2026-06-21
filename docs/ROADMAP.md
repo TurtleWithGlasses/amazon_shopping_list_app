@@ -158,16 +158,14 @@ the tray notification. Scope is **this startup only** (changes between last
 shutdown and this launch); it doesn't show history and doesn't appear when
 nothing changed. The 5-minute refresh still only notifies (no window).
 
+### Phase 19 — Configurable refresh interval
+A dropdown in the toolbar (5 / 15 / 30 minutes / 1 hour) for the auto-refresh
+interval. Changing it takes effect **immediately** (restarts the refresh
+`QTimer`), is persisted in `QSettings`, and is restored on launch.
+
 ---
 
 ## Upcoming
-
-### Phase 19 — Configurable refresh interval
-A dropdown (5 min / 15 min / 30 min / 1 hour) for the auto-refresh interval.
-Changing it takes effect **immediately** — restart the refresh `QTimer` with the
-new interval (`setInterval`/restart), no app restart. Persisted in `QSettings`
-and restored on launch; replaces the hard-coded `REFRESH_INTERVAL_MS`. Lives in
-the toolbar (or Settings → Appearance/General). No deps/schema.
 
 ### Phase 20 — Directional change colors
 Replace the single orange "changed" color with direction-aware colors in the
@@ -193,7 +191,7 @@ help). Target the actual cost:
   the resource exhaustion / Chrome crashes from unbounded parallel launches.
 - Keep Chrome as the reliable fallback; no new deps.
 
-**Next:** Phase 19 → 20 → 21.
+**Next:** Phase 20 → 21.
 
 ---
 
