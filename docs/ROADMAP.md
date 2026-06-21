@@ -143,7 +143,21 @@ changed. Each row: product, old → new price, and stock change / back-in-stock.
   just names), and open the dialog when that batch finalizes with changes.
 - No deps/schema.
 
-**Next:** Phase 17, then 18.
+### Phase 19 — Configurable refresh interval
+A dropdown (5 min / 15 min / 30 min / 1 hour) for the auto-refresh interval.
+Changing it takes effect **immediately** — restart the refresh `QTimer` with the
+new interval (`setInterval`/restart), no app restart. Persisted in `QSettings`
+and restored on launch; replaces the hard-coded `REFRESH_INTERVAL_MS`. Lives in
+the toolbar (or Settings → Appearance/General). No deps/schema.
+
+### Phase 20 — Directional change colors
+Replace the single orange "changed" color with direction-aware colors in the
+Price and Stock cells: **increase → yellow, decrease → green** (a price drop is
+"good", so green). Price direction = compare `last_price` vs `prev_price`; stock
+direction = compare classifier levels/quantity (`prev_stock` vs `last_stock`,
+e.g. out→in = increase). No deps/schema.
+
+**Next:** Phase 17 → 18 → 19 → 20.
 
 ---
 
