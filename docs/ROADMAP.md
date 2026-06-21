@@ -60,9 +60,10 @@ Product / Price / Stock / Last-checked cycle ascending → descending → manual
 "Remember me" stores the Supabase refresh token (never the password) in the OS
 keyring; startup auto-login with fallback to the login dialog.
 
-### Phase 9 — Stock graph
-Price | Stock toggle in the graph window; a stock classifier maps free-text
-availability (TR + EN) to a step chart (Out / Limited / In stock).
+### Phase 9 — Stock graph *(later removed)*
+Originally a Price | Stock toggle in the graph window. **Removed:** stock isn't
+reported reliably across all sites, so the graph is **price-only** now. (The
+stock classifier is still used for back-in-stock change detection.)
 
 ### Phase 10 — Settings page + logout
 Change name / password / email and export data from Settings; Log out clears the
@@ -92,6 +93,9 @@ price/stock against the values persisted from the last session and notifies
 ("While you were away"). Back-in-stock is detected via the stock classifier's
 `OUT → available` transition and surfaced separately, in both startup and the
 5-minute refresh. Notifications are categorized (back in stock / price / stock).
+**Later change:** the on-launch auto-refresh was removed (it froze the app
+launching many scrapes at once), so refresh now runs only on the periodic timer
+or manually — the startup "while you were away" diff/report no longer auto-runs.
 
 ### Phase 15 — Telegram notifications
 `TelegramNotifier` ([services/telegram.py](../services/telegram.py)) plugs into

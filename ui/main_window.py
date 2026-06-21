@@ -537,9 +537,8 @@ class MainWindow(QMainWindow):
         self._snapshot_timer.timeout.connect(self._take_snapshot)
         self._snapshot_timer.start(SNAPSHOT_INTERVAL_MS)
 
-        # One-shot "what changed while you were away" check shortly after launch,
-        # so the window is responsive before the (slow) background scrape starts.
-        QTimer.singleShot(1500, self._startup_check)
+        # No auto-refresh on startup (it froze the app launching many scrapes at
+        # once). Refreshing happens on the periodic timer or via "Refresh All".
         # Quiet update check on startup (notifies only if a newer release exists).
         QTimer.singleShot(4000, lambda: self._check_updates(show_no_update=False))
 
