@@ -116,6 +116,10 @@ Dedicated adapters so far:
 - **Hepsiburada** ([core/scraping/hepsiburada.py](../core/scraping/hepsiburada.py))
   — uses stable `data-test-id` hooks (classes are hashed) for title/price, with
   the `data-hbus` JSON price as fallback; best-effort stock.
+- **AliExpress** ([core/scraping/aliexpress.py](../core/scraping/aliexpress.py))
+  — title (`h1[data-pl=product-title]`) + current price via stable class prefix
+  (`[class*="price-default--current"]`) and `og:image`; stock skipped. Has
+  anti-bot (baxia) that may occasionally serve a challenge instead of the page.
 - **Trendyol** — *parked.* It actively blocks headless automation (serves an
   obfuscated anti-bot page); undetected-chromedriver also failed here. Would need
   a paid scraping API / residential proxy, so it's deferred.

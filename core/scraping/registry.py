@@ -4,6 +4,7 @@ Adding a new store later is just: write an adapter, then `register(MyAdapter())`
 """
 from typing import List, Optional
 
+from .aliexpress import AliExpressAdapter
 from .amazon import AmazonAdapter
 from .base import ProductData, RetailerAdapter
 from .generic import GenericAdapter
@@ -16,6 +17,7 @@ _ADAPTERS: List[RetailerAdapter] = [
     AmazonAdapter(),
     N11Adapter(),
     HepsiburadaAdapter(),
+    AliExpressAdapter(),
     GenericAdapter(),
 ]
 
