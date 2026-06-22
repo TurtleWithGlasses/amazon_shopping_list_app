@@ -32,11 +32,23 @@ _REQUEST_HEADERS = {
 }
 
 
+_session = None
+
+
+def _get_session():
+    """A shared keep-alive HTTP session, so the fast path reuses connections."""
+    global _session
+    if _session is None:
+        import requests
+        _session = requests.Session()
+        _session.headers.update(_REQUEST_HEADERS)
+    return _session
+
+
 def fetch_with_requests(url: str) -> Optional[str]:
     """Fast HTTP fetch — works on residential IPs, no browser needed."""
-    import requests
     try:
-        resp = requests.get(url, headers=_REQUEST_HEADERS, timeout=20)
+        resp = _get_session().get(url, timeout=20)
         if resp.status_code == 200:
             return resp.text
     except Exception:
@@ -68,12 +80,14 @@ def fetch_with_selenium(
     options.add_argument("--remote-allow-origins=*")
     options.add_argument(f"--lang={lang}")
     options.add_argument(f"--user-agent={_USER_AGENT}")
+    # Don't download images on any platform — we read image URLs from the DOM
+    # (src / og:image), not the pixels, so this is a safe, big speed win.
+    options.add_argument("--blink-settings=imagesEnabled=false")
 
     if sys.platform.startswith("linux"):
         # Linux/container: system Chromium + container-only flags
         options.add_argument("--no-sandbox")
         options.add_argument("--disable-dev-shm-usage")
-        options.add_argument("--blink-settings=imagesEnabled=false")
         options.binary_location = "/usr/bin/chromium"
         service = Service("/usr/bin/chromedriver")
     else:

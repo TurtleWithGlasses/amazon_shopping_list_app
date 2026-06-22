@@ -6,7 +6,6 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from .base import ProductData, RetailerAdapter
-from .browser import get_page_html
 from .generic import _parse_price
 
 _TITLE_SELECTORS = [".pageTitle h1", ".productDetail .pageTitle h1", "h1"]
@@ -17,6 +16,7 @@ _OUT_PHRASES = ("tükendi", "tukendi", "stokta yok", "stok yok", "temin edilemiy
 
 class SinerjiAdapter(RetailerAdapter):
     name = "sinerji"
+    wait_css = _TITLE_CSS
 
     def matches(self, url: str) -> bool:
         return "sinerji.gen.tr" in urlparse(url).netloc.lower()
@@ -25,13 +25,7 @@ class SinerjiAdapter(RetailerAdapter):
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"  # drop tracking query
 
-    def scrape(self, url: str) -> ProductData:
-        clean_url = self.normalize_url(url)
-        try:
-            html = get_page_html(clean_url, wait_css=_TITLE_CSS, settle_seconds=2.0)
-        except Exception as exc:
-            return ProductData(url=clean_url, error=str(exc))
-
+    def _parse(self, html: str, clean_url: str) -> ProductData:
         soup = BeautifulSoup(html, "lxml")
         name = self._first_text(soup, _TITLE_SELECTORS)
         if not name:

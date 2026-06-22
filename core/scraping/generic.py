@@ -13,7 +13,6 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from .base import ProductData, RetailerAdapter
-from .browser import get_page_html
 
 
 def _parse_price(value) -> Optional[float]:
@@ -100,13 +99,7 @@ class GenericAdapter(RetailerAdapter):
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"  # drop query/fragment
 
-    def scrape(self, url: str) -> ProductData:
-        clean_url = self.normalize_url(url)
-        try:
-            html = get_page_html(clean_url)
-        except Exception as exc:
-            return ProductData(url=clean_url, error=str(exc))
-
+    def _parse(self, html: str, clean_url: str) -> ProductData:
         soup = BeautifulSoup(html, "lxml")
         data = self._from_jsonld(soup)
         og = self._from_opengraph(soup)

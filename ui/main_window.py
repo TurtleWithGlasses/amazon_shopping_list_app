@@ -3,7 +3,7 @@ import os
 from functools import partial
 
 from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, QUrl
-from PySide6.QtGui import QAction, QColor, QDesktopServices
+from PySide6.QtGui import QAction, QColor, QDesktopServices, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -92,6 +92,11 @@ class MainWindow(QMainWindow):
         self.setWindowTitle(f"Price Tracker  v{__version__}")
         self.resize(1000, 600)
         self._pool = QThreadPool.globalInstance()
+        # Scraping runs on its own capped pool: a big "Refresh All" must not
+        # launch a swarm of Chrome fallbacks (resource exhaustion / crashes),
+        # and it must not starve image/notification tasks on the global pool.
+        self._scrape_pool = QThreadPool(self)
+        self._scrape_pool.setMaxThreadCount(3)
         self._tasks = []          # keep refs so QRunnables aren't GC'd
         self._pending_refresh = 0
         # Per-row widgets, keyed by product id (rebuilt on every reload()).
@@ -176,8 +181,10 @@ class MainWindow(QMainWindow):
         self.url_input.setPlaceholderText("Paste an Amazon product URL…")
         self.url_input.returnPressed.connect(self._add_product)
         self.add_button = QPushButton("Add Product")
+        self.add_button.setObjectName("primary")  # M3 filled primary button
         self.add_button.clicked.connect(self._add_product)
         self.refresh_button = QPushButton("Refresh All")
+        self.refresh_button.setObjectName("primary")
         self.refresh_button.clicked.connect(self._refresh_all)
         self.interval_combo = QComboBox()
         for label, ms in REFRESH_INTERVAL_OPTIONS:
@@ -217,6 +224,9 @@ class MainWindow(QMainWindow):
         header.setSectionsClickable(True)
         header.sectionClicked.connect(self._on_header_clicked)
         self.table.cellClicked.connect(self._open_link)
+        # Widget cells (arrows/logo/image/status/actions) don't paint the row
+        # selection brush like plain item cells do; tint them to match.
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
         layout.addWidget(self.table)
 
         self.setCentralWidget(central)
@@ -233,12 +243,19 @@ class MainWindow(QMainWindow):
     # --- data → table ------------------------------------------------------
 
     def reload(self) -> None:
+        # Preserve the scroll position: rebuilding the table resets the
+        # scrollbar to the top, which yanks the view up after Add/refresh/move.
+        scroll = self.table.verticalScrollBar().value()
         products = self._sort_products(repo.list_products())
         self.table.setRowCount(0)
         self._status_cells = {}
         self._row_refresh_buttons = {}
         for product in products:
             self._append_row(product)
+        # Restore now (clamped to the new range) and again after the view
+        # finishes its layout, so the offset sticks even if the range updated late.
+        self.table.verticalScrollBar().setValue(scroll)
+        QTimer.singleShot(0, lambda: self.table.verticalScrollBar().setValue(scroll))
         self.statusBar().showMessage(f"{len(products)} product(s) tracked")
 
     # --- sorting -----------------------------------------------------------
@@ -301,6 +318,7 @@ class MainWindow(QMainWindow):
         self.table.setCellWidget(row, COL_MOVE, self._move_buttons(product.id))
 
         logo_label = QLabel()
+        logo_label.setObjectName("rowcell")  # transparent over the row color
         logo_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         pixmap = logo_pixmap(product, LOGO_W, LOGO_H)
         if pixmap is not None:
@@ -309,6 +327,7 @@ class MainWindow(QMainWindow):
         self.table.setCellWidget(row, COL_LOGO, logo_label)
 
         image_label = QLabel()
+        image_label.setObjectName("rowcell")
         image_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         image_label.setFixedSize(IMG_SIZE + 6, IMG_SIZE + 6)
         self.table.setCellWidget(row, COL_IMAGE, image_label)
@@ -345,6 +364,7 @@ class MainWindow(QMainWindow):
         self.table.setItem(row, COL_CHECKED, checked_item)
 
         status_label = QLabel()
+        status_label.setObjectName("rowcell")
         status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setCellWidget(row, COL_STATUS, status_label)
         self._status_cells[product.id] = status_label
@@ -377,8 +397,32 @@ class MainWindow(QMainWindow):
         label.setStyleSheet(f"color: {color}; font-size: 15px; font-weight: bold;")
         label.setToolTip(default_tip if tooltip is None else tooltip)
 
+    # Cells backed by widgets (not QTableWidgetItems) — these don't get the
+    # selection brush for free, so we tint them on selection change.
+    _WIDGET_COLUMNS = (COL_MOVE, COL_LOGO, COL_IMAGE, COL_STATUS, COL_ACTIONS)
+
+    def _on_selection_changed(self) -> None:
+        selected = {ix.row() for ix in self.table.selectionModel().selectedRows()}
+        highlight = self.table.palette().color(QPalette.ColorRole.Highlight)
+        for row in range(self.table.rowCount()):
+            self._tint_row_widgets(row, row in selected, highlight)
+
+    def _tint_row_widgets(self, row: int, on: bool, highlight: QColor) -> None:
+        # A stylesheet scoped to the container (#rowcell) paints the cell's
+        # background to match the selection while leaving child buttons/labels
+        # styled normally. The palette/Window role is unreliable here because
+        # these containers don't all use Window as their background role.
+        css = f"#rowcell {{ background-color: {highlight.name()}; }}" if on else ""
+        for col in self._WIDGET_COLUMNS:
+            widget = self.table.cellWidget(row, col)
+            if widget is None:
+                continue
+            widget.setObjectName("rowcell")
+            widget.setStyleSheet(css)
+
     def _action_buttons(self, product_id: int) -> QWidget:
         widget = QWidget()
+        widget.setObjectName("rowcell")  # transparent over the row color
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(2, 2, 2, 2)
         refresh_btn = QPushButton("Refresh")
@@ -399,6 +443,7 @@ class MainWindow(QMainWindow):
 
     def _move_buttons(self, product_id: int) -> QWidget:
         widget = QWidget()
+        widget.setObjectName("rowcell")  # transparent over the row color
         layout = QHBoxLayout(widget)
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(3)
@@ -663,7 +708,7 @@ class MainWindow(QMainWindow):
         task.signals.finished.connect(on_finished)
         task.signals.finished.connect(partial(self._discard_task, task))
         self._tasks.append(task)
-        self._pool.start(task)
+        self._scrape_pool.start(task)
 
     def _discard_task(self, task, *_args) -> None:
         if task in self._tasks:

@@ -1,13 +1,11 @@
 """Amazon retailer adapter (amazon.com.tr and other Amazon domains)."""
 import re
-import time
 from typing import Optional, Tuple
 from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
 from .base import ProductData, RetailerAdapter
-from .browser import get_page_html
 
 _TITLE_SELECTORS = ["#productTitle", "#title", "h1.a-size-large span", "#btAsinTitle"]
 _TITLE_CSS = ", ".join(_TITLE_SELECTORS)
@@ -56,6 +54,10 @@ _IMAGE_SELECTORS = [
 
 class AmazonAdapter(RetailerAdapter):
     name = "amazon"
+    wait_css = _TITLE_CSS
+    # Amazon occasionally renders a partial page; re-fetch once after a pause.
+    selenium_attempts = 2
+    selenium_retry_sleep = 4.0
 
     def matches(self, url: str) -> bool:
         return "amazon." in urlparse(url).netloc.lower()
@@ -69,24 +71,9 @@ class AmazonAdapter(RetailerAdapter):
             return f"{parsed.scheme}://{parsed.netloc}/dp/{match.group(1)}"
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
 
-    def scrape(self, url: str) -> ProductData:
-        clean_url = self.normalize_url(url)
-
-        soup = None
-        name = None
-        for attempt in range(2):
-            try:
-                html = get_page_html(clean_url, wait_css=_TITLE_CSS)
-            except Exception as exc:
-                return ProductData(url=clean_url, error=str(exc))
-
-            soup = BeautifulSoup(html, "lxml")
-            name = self._extract_name(soup)
-            if name:
-                break
-            if attempt == 0:
-                time.sleep(4)
-
+    def _parse(self, html: str, clean_url: str) -> ProductData:
+        soup = BeautifulSoup(html, "lxml")
+        name = self._extract_name(soup)
         if not name:
             return ProductData(url=clean_url, error=self._classify_failure(soup))
 

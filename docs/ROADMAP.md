@@ -187,26 +187,16 @@ and updates only its row, plus a **Status** column indicator: `⟳` refreshing �
 rows flip to ✓/✗ live as each async task finishes. Batch and single refresh
 share `_persist_scrape`; single-row refresh is gated while a batch runs.
 
----
-
-## Upcoming
-
 ### Phase 21 — Scraping performance
-The bottleneck is launching Chrome + rendering JS (~10–30s/product); the DB,
-parsing, and data structures are negligible (so Redis/caching layers wouldn't
-help). Target the actual cost:
-- **`requests`-first / embedded-data fast path:** try a plain HTTP fetch and
-  read the data from the initial HTML (JSON-LD, Open Graph, or embedded JSON
-  like n11's `priceFloat`); only fall back to Chrome when the data isn't there.
-  ~100× faster for sites that allow it.
-- **Persistent browser reuse:** keep one headless Chrome alive and navigate it
-  through a whole "Refresh All" batch instead of starting/stopping Chrome per
-  product (saves ~2–5s startup each).
-- **Block images/CSS/fonts** during scraping (Chrome flags / CDP) so pages load
-  faster — extend the Linux-only image blocking to Windows.
-- **Cap concurrency** to a small fixed limit (e.g. 2–3) — faster *and* avoids
-  the resource exhaustion / Chrome crashes from unbounded parallel launches.
-- Keep Chrome as the reliable fallback; no new deps.
+`requests`-first fast path: each adapter now splits fetch from parse (`_parse`),
+so `RetailerAdapter.scrape()` tries a plain HTTP fetch and reads the price from
+the initial HTML (embedded JSON like n11's `priceFloat`, microdata, JSON-LD,
+server-rendered DOM), only launching headless Chrome when the data isn't there
+— ~100x faster for server-rendered sites. Also: image loading disabled on all
+platforms (was Linux-only), a shared keep-alive HTTP session, and scraping moved
+to a dedicated pool capped at 3 so "Refresh All" can't spawn a swarm of Chrome
+instances (the global pool stays free for thumbnails/notifications).
+Persistent-browser reuse (Part D) was deferred — see Upcoming.
 
 ### Phase 25 — Auth confirmation email + post-confirmation page
 Polish the sign-up confirmation experience (Supabase Auth):
@@ -256,7 +246,21 @@ into Qt — we emulate the style with a Qt stylesheet (QSS) theme:
   once. UI-only; no schema; no new runtime deps (pure QSS, optional design-time
   use of Stitch).
 
-**Next:** Phase 21.
+*Shipped:* new "Stitch (Material 3)" theme (default) + M3 tokens on every theme;
+tonal pill buttons, filled-primary CTAs (`Add Product` / `Refresh All`), filled
+rounded inputs, card-like table, refined header/scrollbars; transparent
+`#rowcell` wrappers so rows/selection render consistently.
+
+---
+
+## Upcoming
+
+Nothing queued — the roadmap through Phase 28 is shipped (v0.5.0). Possible
+future work:
+- **Phase 21 Part D — persistent browser reuse** (deferred): keep one headless
+  Chrome alive across a "Refresh All" batch to save its ~2–5s startup. Lower
+  value now that the fast path skips Chrome for most sites; revisit only if
+  browser-fallback sites come to dominate a refresh.
 
 ---
 

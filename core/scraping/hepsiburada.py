@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 from bs4 import BeautifulSoup
 
 from .base import ProductData, RetailerAdapter
-from .browser import get_page_html
 from .generic import GenericAdapter, _parse_price
 
 _TITLE_SELECTORS = ['h1[data-test-id="title"]', '[data-test-id="title-area"] h1', '[data-test-id="title"]']
@@ -26,6 +25,7 @@ _OUT_PHRASES = ("tükendi", "tukendi", "satıcı bulunmuyor", "satici bulunmuyor
 
 class HepsiburadaAdapter(RetailerAdapter):
     name = "hepsiburada"
+    wait_css = _TITLE_CSS
 
     def matches(self, url: str) -> bool:
         return "hepsiburada.com" in urlparse(url).netloc.lower()
@@ -34,13 +34,7 @@ class HepsiburadaAdapter(RetailerAdapter):
         parsed = urlparse(url)
         return f"{parsed.scheme}://{parsed.netloc}{parsed.path}"  # drop query/fragment
 
-    def scrape(self, url: str) -> ProductData:
-        clean_url = self.normalize_url(url)
-        try:
-            html = get_page_html(clean_url, wait_css=_TITLE_CSS, settle_seconds=2.0)
-        except Exception as exc:
-            return ProductData(url=clean_url, error=str(exc))
-
+    def _parse(self, html: str, clean_url: str) -> ProductData:
         soup = BeautifulSoup(html, "lxml")
         name = self._first_text(soup, _TITLE_SELECTORS)
         if not name:
