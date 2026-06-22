@@ -241,6 +241,21 @@ top, because `reload()` clears and rebuilds every row (resetting the scrollbar).
 - Applies to `reload()` callers: Add Product, single/batch refresh, move,
   edit/delete. UI-only; no schema.
 
+### Phase 28 — Google Stitch / Material 3 visual restyle
+Adopt the look of Google Stitch (Google's AI UI-design tool, Material 3
+aesthetic). Stitch outputs **web** designs/HTML-CSS, so there's no direct import
+into Qt — we emulate the style with a Qt stylesheet (QSS) theme:
+- Material-3 color tokens (primary/surface/on-surface), rounded corners, subtle
+  elevation/shadows, consistent spacing, and a clean type scale.
+- Restyle the high-traffic widgets: toolbar, buttons, inputs, the product
+  table (header, rows, selection), status/menu bar.
+- Workflow: optionally generate a reference mockup in Stitch, then translate it
+  to QSS; build on the app's existing theming/dark-mode so both themes get the
+  new look.
+- Coordinate with Phase 26 (selection highlight) so the table styling is done
+  once. UI-only; no schema; no new runtime deps (pure QSS, optional design-time
+  use of Stitch).
+
 **Next:** Phase 21.
 
 ---
