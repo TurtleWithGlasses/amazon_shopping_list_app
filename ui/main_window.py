@@ -501,8 +501,9 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Added: {data.name}")
 
     def _refresh_all(self) -> None:
-        """Manual refresh: re-scrape all + log a history point per product."""
-        self._run_refresh(snapshot=True, notify=False)
+        """Manual refresh: re-scrape all, log a history point, and notify
+        (tray + Telegram) on any price/stock change — same as the auto-refresh."""
+        self._run_refresh(snapshot=True, notify=True)
 
     def _refresh_one(self, product_id) -> None:
         """Re-scrape a single product without touching the rest of the table."""
@@ -761,6 +762,11 @@ class MainWindow(QMainWindow):
         geometry = self._settings.value("geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
+        # restoreGeometry usually re-applies the maximized state, but an explicit
+        # flag is more reliable across the show() in main.py — re-maximize once
+        # the event loop starts if we were maximized when last saved.
+        if self._settings.value("window_maximized", False, type=bool):
+            QTimer.singleShot(0, self.showMaximized)
         # _v2: layout defaults changed (taller rows, wider columns), so old saved
         # column widths are intentionally ignored.
         header_state = self._settings.value("header_state_v7")
@@ -797,13 +803,21 @@ class MainWindow(QMainWindow):
 
     def _save_layout(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
+        self._settings.setValue("window_maximized", self.isMaximized() or self.isFullScreen())
         self._settings.setValue("header_state_v7", self.table.horizontalHeader().saveState())
         self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
         self._settings.setValue("sort_column", -1 if self._sort_column is None else self._sort_column)
         self._settings.setValue("sort_order", self._sort_order.value)
 
     def _restore_window(self) -> None:
-        self.showNormal()
+        # Reopen in the same state it was hidden in (don't force "normal", which
+        # would drop a maximized/full-screen window down to a small window).
+        if self.isMaximized():
+            self.showMaximized()
+        elif self.isFullScreen():
+            self.showFullScreen()
+        else:
+            self.showNormal()
         self.raise_()
         self.activateWindow()
 
