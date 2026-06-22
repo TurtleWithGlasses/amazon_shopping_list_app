@@ -232,6 +232,15 @@ their default background (see screenshot), so a selected row looks patchy.
 - Goal: the entire row (including widget columns) reads as one consistent
   selection. UI-only; no schema.
 
+### Phase 27 — Preserve scroll position on reload
+After scrolling down, adding a URL or refreshing jumps the table back to the
+top, because `reload()` clears and rebuilds every row (resetting the scrollbar).
+- Fix: capture `table.verticalScrollBar().value()` before the rebuild and
+  restore it after (and ideally keep the selected/added product in view). Guard
+  against the new content being shorter than the old offset.
+- Applies to `reload()` callers: Add Product, single/batch refresh, move,
+  edit/delete. UI-only; no schema.
+
 **Next:** Phase 21.
 
 ---
