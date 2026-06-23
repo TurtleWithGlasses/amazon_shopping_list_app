@@ -77,7 +77,21 @@ class GraphDialog(QDialog):
         self.plot.setVisible(True)
         xs = [t for t, _ in points]
         ys = [p for _, p in points]
+        # Continuous line through every reading (keeps flat runs and steps exact).
         self.plot.plot(xs, ys, pen=_LINE)
+        # Dots only where the price changed (plus the first reading), so long
+        # flat stretches aren't littered with overlapping dots.
         cur = self.product.currency or ""
-        tips = [f"{p:,.2f} {cur}".strip() + f"\n{self._fmt_time(t)}" for t, p in points]
-        self._add_hover_points(xs, ys, tips)
+        kx, ky, tips = [], [], []
+        for i in range(len(ys)):
+            if i != 0 and ys[i] == ys[i - 1]:
+                continue
+            kx.append(xs[i])
+            ky.append(ys[i])
+            tip = f"{ys[i]:,.2f} {cur}".strip() + f"\n{self._fmt_time(xs[i])}"
+            if i != 0:
+                delta = ys[i] - ys[i - 1]
+                arrow = "▲" if delta > 0 else "▼"
+                tip += f"\n{arrow} {delta:+,.2f} {cur}".rstrip()
+            tips.append(tip)
+        self._add_hover_points(kx, ky, tips)
