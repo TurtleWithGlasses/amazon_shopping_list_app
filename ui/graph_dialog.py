@@ -79,17 +79,22 @@ class GraphDialog(QDialog):
         ys = [p for _, p in points]
         # Continuous line through every reading (keeps flat runs and steps exact).
         self.plot.plot(xs, ys, pen=_LINE)
-        # Dots only where the price changed (plus the first reading), so long
-        # flat stretches aren't littered with overlapping dots.
+        # Dots at both ends of each segment: the first/last reading, the point
+        # where the price changes (arrival), and the last point before a change
+        # (departure) — so each line's two endpoints are marked, without
+        # littering long flat stretches with dots.
         cur = self.product.currency or ""
+        n = len(ys)
         kx, ky, tips = [], [], []
-        for i in range(len(ys)):
-            if i != 0 and ys[i] == ys[i - 1]:
+        for i in range(n):
+            keep = (i == 0 or i == n - 1
+                    or ys[i] != ys[i - 1] or ys[i] != ys[i + 1])
+            if not keep:
                 continue
             kx.append(xs[i])
             ky.append(ys[i])
             tip = f"{ys[i]:,.2f} {cur}".strip() + f"\n{self._fmt_time(xs[i])}"
-            if i != 0:
+            if i != 0 and ys[i] != ys[i - 1]:  # only on an actual change
                 delta = ys[i] - ys[i - 1]
                 arrow = "▲" if delta > 0 else "▼"
                 tip += f"\n{arrow} {delta:+,.2f} {cur}".rstrip()
