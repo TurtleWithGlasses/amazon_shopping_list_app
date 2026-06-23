@@ -17,6 +17,10 @@ _OUT_PHRASES = ("tükendi", "tukendi", "stokta yok", "stok yok", "temin edilemiy
 class SinerjiAdapter(RetailerAdapter):
     name = "sinerji"
     wait_css = _TITLE_CSS
+    # Sinerji is a JS-rendered SPA: the <h1> appears empty first and its text is
+    # filled later, so wait for non-empty title text (not just element presence).
+    wait_text_css = _TITLE_CSS
+    settle_seconds = 2.5
 
     def matches(self, url: str) -> bool:
         return "sinerji.gen.tr" in urlparse(url).netloc.lower()

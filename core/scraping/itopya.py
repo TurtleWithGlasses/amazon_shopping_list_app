@@ -26,6 +26,9 @@ _OUT_PHRASES = ("tükendi", "tukendi", "stokta yok", "stok yok", "temin edilemiy
 class ItopyaAdapter(RetailerAdapter):
     name = "itopya"
     wait_css = _TITLE_CSS
+    # JS-rendered title: wait for non-empty text, not just element presence.
+    wait_text_css = _TITLE_CSS
+    settle_seconds = 2.5
 
     def matches(self, url: str) -> bool:
         return "itopya.com" in urlparse(url).netloc.lower()
