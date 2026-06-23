@@ -31,6 +31,10 @@ if os.path.isdir("assets/logos"):
 if os.path.exists("config.local.json"):
     datas += [("config.local.json", ".")]
 
+# Selenium 4.x lazily imports its webdriver submodules (e.g.
+# selenium.webdriver.chrome.webdriver), so PyInstaller's static analysis misses
+# them — collect them explicitly or Chrome scraping crashes in the built app.
+hiddenimports += collect_submodules("selenium")
 # Selenium Manager (locates chromedriver at runtime) must be bundled.
 datas += collect_data_files("selenium")
 _sel_root = os.path.dirname(selenium.__file__)
