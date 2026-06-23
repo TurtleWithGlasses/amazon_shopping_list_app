@@ -121,10 +121,7 @@ class MainWindow(QMainWindow):
         # refresh batch state
         self._refresh_title = "Price / stock changed"
         self._refresh_report = False  # open the changes report window on finalize
-        self._price_changes = []
-        self._back_in_stock = []
-        self._stock_changes = []
-        self._refresh_events = []  # detailed change records for the report window
+        self._refresh_events = []  # detailed change records (notification + report)
 
         self._build_menu()
         self._build_central()
@@ -561,9 +558,6 @@ class MainWindow(QMainWindow):
         self._refresh_notify = notify
         self._refresh_title = title
         self._refresh_report = report
-        self._price_changes = []
-        self._back_in_stock = []
-        self._stock_changes = []
         self._refresh_events = []
         self._pending_refresh = len(products)
         self.refresh_button.setEnabled(False)
@@ -633,10 +627,6 @@ class MainWindow(QMainWindow):
         if product is None:
             return
         label = product.name or product.url
-        if product.price_changed:
-            self._price_changes.append(label)
-        if product.stock_changed:
-            (self._back_in_stock if back else self._stock_changes).append(label)
         if changed:
             self._refresh_events.append({
                 "name": label,
@@ -650,26 +640,44 @@ class MainWindow(QMainWindow):
                 "back_in_stock": back,
             })
 
-    @staticmethod
-    def _join(names) -> str:
-        shown = ", ".join(names[:5])
-        return shown + ("…" if len(names) > 5 else "")
+    def _changes_message(self, limit: int = 25) -> str:
+        """Readable per-product change list for the notification body.
+
+        Price moves get a direction arrow at the end of the line (user
+        convention: red/up = price rose, green/down = price fell).
+        """
+        up, down = "🔴⬆️", "🟢⬇️"
+        lines = []
+        for ev in self._refresh_events[:limit]:
+            name = ev["name"] or ""
+            if len(name) > 60:
+                name = name[:59] + "…"
+            lines.append(f"• {name}")
+            cur = ev["currency"] or ""
+            if ev["price_changed"] and ev["last_price"] is not None:
+                new = format_price(ev["last_price"], cur)
+                if ev["prev_price"] is not None:
+                    prev = format_price(ev["prev_price"], cur)
+                    arrow = up if ev["last_price"] > ev["prev_price"] else down
+                    lines.append(f"    {prev} → {new}  {arrow}")
+                else:
+                    lines.append(f"    {new}")
+            if ev["back_in_stock"]:
+                lines.append("    ✅ Back in stock")
+            elif ev["stock_changed"]:
+                lines.append(f"    📦 {ev['prev_stock'] or '—'} → {ev['last_stock'] or '—'}")
+        remaining = len(self._refresh_events) - limit
+        if remaining > 0:
+            lines.append(f"…and {remaining} more")
+        return "\n".join(lines)
 
     def _finalize_refresh(self) -> None:
         self.refresh_button.setEnabled(True)
         self.reload()
 
-        lines = []
-        if self._back_in_stock:
-            lines.append(f"Back in stock: {self._join(self._back_in_stock)}")
-        if self._price_changes:
-            lines.append(f"Price changed: {self._join(self._price_changes)}")
-        if self._stock_changes:
-            lines.append(f"Stock changed: {self._join(self._stock_changes)}")
-
-        total = len(self._back_in_stock) + len(self._price_changes) + len(self._stock_changes)
-        if lines and self._refresh_notify:
-            self._notifications.notify(self._refresh_title, "\n".join(lines))
+        total = len(self._refresh_events)
+        if self._refresh_notify and self._refresh_events:
+            self._notifications.notify(self._refresh_title, self._changes_message())
         self.statusBar().showMessage(
             f"Refresh complete — {total} change(s) detected" if total else "Refresh complete"
         )
