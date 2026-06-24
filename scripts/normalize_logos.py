@@ -20,8 +20,9 @@ from PIL import Image, ImageChops
 
 # Retailer keys that map to Product.retailer (see core/scraping adapters).
 RETAILERS = [
-    "amazon", "n11", "hepsiburada", "itopya",
-    "sinerji", "incehesap", "aliexpress", "generic",
+    "amazon", "n11", "hepsiburada", "itopya", "sinerji", "incehesap",
+    "aliexpress", "teknosa", "vatanbilgisayar", "akakce", "mediamarkt",
+    "trendyol", "generic",
 ]
 SRC_DIR = Path("assets/logos/_src")
 OUT_DIR = Path("assets/logos")

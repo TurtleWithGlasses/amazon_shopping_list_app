@@ -2,10 +2,12 @@
 
 Maps a product to a bundled logo in ``assets/logos/`` keyed by the scraper
 adapter name (``amazon``, ``n11``, ``hepsiburada``, ``itopya``, ``sinerji``,
-``incehesap``, ``aliexpress``), falling back to ``generic`` for anything else.
+``incehesap``, ``aliexpress``) or, for sites without a dedicated adapter, the
+domain word (e.g. ``teknosa.com`` -> ``teknosa``), falling back to ``generic``.
 Scaled pixmaps are cached per (key, box) so repeated rows are cheap.
 """
 from pathlib import Path
+from urllib.parse import urlparse
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QPixmap
@@ -14,17 +16,35 @@ from core.scraping.registry import get_adapter
 
 _LOGO_DIR = Path(__file__).resolve().parent.parent / "assets" / "logos"
 _FALLBACK = "generic"
+_TLDS = {"com", "net", "org", "co", "gen", "tr", "gov", "edu"}
 _cache: dict[tuple, QPixmap] = {}
 
 
+def _domain_key(url: str) -> str:
+    """Domain word from a URL: www.teknosa.com -> 'teknosa', tr.aliexpress.com
+    -> 'aliexpress' (drop a leading www and trailing TLD parts)."""
+    host = urlparse(url or "").netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    parts = [p for p in host.split(".") if p]
+    while len(parts) > 1 and parts[-1] in _TLDS:
+        parts.pop()
+    return parts[-1] if parts else ""
+
+
 def logo_key(product) -> str:
-    """Logo filename stem for a product (adapter name), or ``generic``."""
+    """Logo filename stem for a product, or ``generic``."""
     retailer = (getattr(product, "retailer", "") or "").strip().lower()
     if retailer and (_LOGO_DIR / f"{retailer}.png").exists():
         return retailer
-    adapter = get_adapter(getattr(product, "url", "") or "")
-    if adapter and (_LOGO_DIR / f"{adapter.name}.png").exists():
+    url = getattr(product, "url", "") or ""
+    adapter = get_adapter(url)
+    if adapter and adapter.name != _FALLBACK and (_LOGO_DIR / f"{adapter.name}.png").exists():
         return adapter.name
+    # Sites handled by the generic adapter: match a bundled logo by domain word.
+    site = _domain_key(url)
+    if site and (_LOGO_DIR / f"{site}.png").exists():
+        return site
     return _FALLBACK
 
 

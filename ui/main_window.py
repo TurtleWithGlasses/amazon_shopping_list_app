@@ -1,6 +1,7 @@
 """Main application window: product table, add/refresh, edit/delete, graph, export."""
 import os
 from functools import partial
+from urllib.parse import urlparse
 
 from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QPalette
@@ -29,6 +30,7 @@ from PySide6.QtWidgets import (
 
 from core import datastore as repo
 from core.cloud import auth
+from core.scraping.registry import get_adapter
 from core.version import GITHUB_REPO, __version__
 from services import export as export_service
 from services.notifications import NotificationService
@@ -476,10 +478,30 @@ class MainWindow(QMainWindow):
 
     # --- add / refresh (async scraping) ------------------------------------
 
+    @staticmethod
+    def _canonical_url(url: str) -> str:
+        """Compare-friendly form: no scheme, no www, no query, no trailing slash."""
+        parsed = urlparse(url or "")
+        host = parsed.netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        return f"{host}{parsed.path.rstrip('/')}"
+
     def _add_product(self) -> None:
         url = self.url_input.text().strip()
         if not url:
             QMessageBox.information(self, "Add product", "Please paste a product URL.")
+            return
+        # Reject duplicates up front (compare the canonical, query-stripped URL;
+        # normalize first so Amazon /dp vs /gp forms of the same item also match).
+        adapter = get_adapter(url)
+        normalized = adapter.normalize_url(url) if adapter else url
+        target = self._canonical_url(normalized)
+        if any(self._canonical_url(p.url) == target for p in repo.list_products()):
+            QMessageBox.warning(
+                self, "Already on your list",
+                "The product you are trying to add already exists on your list.",
+            )
             return
         self.add_button.setEnabled(False)
         self.statusBar().showMessage("Fetching product…")
@@ -630,6 +652,7 @@ class MainWindow(QMainWindow):
         if changed:
             self._refresh_events.append({
                 "name": label,
+                "site": self._site_name(product.url),
                 "currency": product.currency,
                 "price_changed": product.price_changed,
                 "prev_price": product.prev_price,
@@ -639,6 +662,20 @@ class MainWindow(QMainWindow):
                 "last_stock": product.last_stock,
                 "back_in_stock": back,
             })
+
+    @staticmethod
+    def _site_name(url: str) -> str:
+        """Short store name from a URL, e.g. www.hepsiburada.com -> 'Hepsiburada',
+        tr.aliexpress.com -> 'Aliexpress' (drop www and TLD parts like com/gen/tr)."""
+        host = urlparse(url or "").netloc.lower()
+        if host.startswith("www."):
+            host = host[4:]
+        parts = host.split(".")
+        tlds = {"com", "net", "org", "co", "gen", "tr", "gov", "edu"}
+        while len(parts) > 1 and parts[-1] in tlds:
+            parts.pop()
+        site = parts[-1] if parts else host
+        return site.capitalize()
 
     def _changes_message(self, limit: int = 25) -> str:
         """Readable per-product change list for the notification body.
@@ -650,9 +687,11 @@ class MainWindow(QMainWindow):
         lines = []
         for ev in self._refresh_events[:limit]:
             name = ev["name"] or ""
-            if len(name) > 60:
-                name = name[:59] + "…"
-            lines.append(f"• {name}")
+            if len(name) > 55:
+                name = name[:54] + "…"
+            site = ev.get("site") or ""
+            header = f"• {site} · {name}" if site else f"• {name}"
+            lines.append(header)
             cur = ev["currency"] or ""
             if ev["price_changed"] and ev["last_price"] is not None:
                 new = format_price(ev["last_price"], cur)
