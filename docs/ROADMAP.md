@@ -292,6 +292,63 @@ colors unchanged).
 
 ## Upcoming
 
+A connected set of phases that turn the tracker into a buying/decision tool.
+Built to need **no paid APIs** — discovery and recommendations reuse the
+existing scraper. Suggested order: 33 → 34 → 35 → 36 (33 is standalone and
+highest value; 34 is the hub the others feed into).
+
+### Phase 33 — Target-price alerts
+Today the app notifies on *any* change. Add per-product **alert rules** so it
+notifies only when it matters:
+- **Below target:** "notify when price ≤ ₺X."
+- **Percent drop:** "notify when ≥ N% below its recent average" (reuses the
+  stored price history for the average / all-time low).
+- A row badge when an alert condition is met; alerts ride the existing
+  tray + Telegram channels and respect the notification format.
+- Schema: a small `alerts` table (product_id, type, threshold) or alert columns
+  on `products`. Checked in `_persist_scrape` after each scan.
+
+### Phase 34 — Product groups (manual comparison sets)
+User-defined groups to compare listings side by side — the **hub** for the next
+two phases. Manual (not auto) because a group may hold *the same* product across
+sites **or** *related* products (e.g. RTX 5080 vs 5090) — only the user knows
+the intent.
+- **Model:** `groups` (id, user_id, name) + a many-to-many product↔group link (a
+  product can be in several groups).
+- **Group view:** members with site logo, current price + ▲/▼ arrow, and
+  lowest-in-30-days; **cheapest highlighted**; a combined graph overlays each
+  member's price line. Show **per-member** prices (no single "group price", since
+  members may differ).
+- **Group-level alerts** (with Phase 33): "notify when the cheapest member ≤ ₺X."
+- UI-only logic over a small schema; reuses the existing graph/notify pipeline.
+
+### Phase 35 — "Find it cheaper elsewhere" (comparison-site discovery)
+Suggest the same product on other sites — **free**, by leaning on a price-
+comparison site (Akakçe / Cimri) that already solved cross-site matching, rather
+than a paid search API.
+- Given a product, query its comparison-site page and scrape the **seller +
+  price list** (reuses the scraping pipeline; needs an adapter for the section).
+- Surface results as "also available on…"; matching is **best-effort** —
+  results are **suggestions the user confirms**, then drop into a Phase 34 group.
+- Optional precision signal: match on **GTIN/MPN/brand** from structured data
+  when present. No paid API; human-in-the-loop to avoid wrong-variant matches.
+
+### Phase 36 — Complementary product suggestions ("you might also track…")
+"Tracking shaving blades? You might want shaving gel / after-shave too." Built
+**free**, no recommender-model data needed (avoids the cold-start problem):
+- **Primary — scrape the retailer's own widget:** parse "Birlikte Alınanlar /
+  İlgili Ürünler" on pages already being loaded — real co-purchase data, zero
+  cost, items already trackable.
+- **Fallback — curated category→complement rules:** a static JSON map
+  (`shaving → {gel, after-shave, brush}`) with keyword-based category detection;
+  suggested terms run through Phase 35 discovery to become real listings.
+- **Optional upgrade — local LLM via Ollama:** if the user runs Ollama
+  (`localhost:11434`, no API key, no cost), ask a small model (e.g.
+  `llama3.2:3b`) for complementary **Turkish** search terms; fall back to the
+  above when absent. Not bundled (would bloat the installer); cached per product.
+- A quiet, **dismissible** suggestions strip; everything human-confirmed; results
+  feed discovery/groups.
+
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome
 alive across a batch; low value now that the fast path skips Chrome for most
 sites, so revisit only if browser-fallback sites come to dominate a refresh.
@@ -299,6 +356,14 @@ sites, so revisit only if browser-fallback sites come to dominate a refresh.
 ---
 
 ## Known follow-ups / tech debt
+- **Offline-DB migration gap**: running **not logged in** can crash on missing
+  `image_url` / `position` columns (the local SQLite predates them). Add a tiny
+  startup migration / schema check so the offline path doesn't break.
+- **No automated tests yet**: add a `pytest` suite — adapter parse-tests against
+  saved HTML fixtures, plus price-parsing / dedup / notification-format tests —
+  so scrapers and core logic can change safely as the app grows.
+- **Dedicated adapters** for Teknosa / Vatan / Media Markt / Trendyol (currently
+  scraped via the generic adapter, which may misread price/stock).
 - **Code signing**: unsigned exe/installer triggers SmartScreen. Needs an
   Authenticode certificate (see `BUILD.md`).
 - The `.exe` must be rebuilt (`build.bat`) after dependency or asset changes.
