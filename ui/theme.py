@@ -58,35 +58,36 @@ def _apply_font(app) -> None:
     app.setFont(font)
 
 # Each theme is a flat color map consumed by the palette + QSS builders.
-# `surface_variant` = tonal fill (M3 buttons/inputs); `hover` = state-layer tint.
+# `surface_variant` = tonal fill (M3 buttons/inputs); `hover` = state-layer tint;
+# `link` = product-name link color, tuned to read well on each theme.
 THEMES = {
     "stitch": {
         "window": "#f6f8fc", "base": "#ffffff", "alt": "#eef1f8",
         "text": "#1b1f27", "subtext": "#5b6472", "border": "#cdd3df",
         "accent": "#4f63d2", "accent_text": "#ffffff", "header": "#eef1f8",
         "button": "#eaedf6", "selection": "#4f63d2", "selection_text": "#ffffff",
-        "surface_variant": "#e7ebf5", "hover": "#dde3f3",
+        "surface_variant": "#e7ebf5", "hover": "#dde3f3", "link": "#3a4ba8",
     },
     "light": {
         "window": "#f5f6f8", "base": "#ffffff", "alt": "#eef1f5",
         "text": "#1f2329", "subtext": "#6b7280", "border": "#d6dae0",
         "accent": "#2563eb", "accent_text": "#ffffff", "header": "#e9edf2",
         "button": "#eaedf2", "selection": "#2563eb", "selection_text": "#ffffff",
-        "surface_variant": "#e6e9f0", "hover": "#dfe3ea",
+        "surface_variant": "#e6e9f0", "hover": "#dfe3ea", "link": "#1f57c4",
     },
     "dark": {
         "window": "#1e1f24", "base": "#26282e", "alt": "#2c2f36",
         "text": "#e6e8eb", "subtext": "#9aa0a8", "border": "#3a3d45",
         "accent": "#3b82f6", "accent_text": "#ffffff", "header": "#2a2d34",
         "button": "#2f323a", "selection": "#3b82f6", "selection_text": "#ffffff",
-        "surface_variant": "#343843", "hover": "#3a3f4b",
+        "surface_variant": "#343843", "hover": "#3a3f4b", "link": "#8ab4f8",
     },
     "material": {
         "window": "#1b1f24", "base": "#222831", "alt": "#2a313b",
         "text": "#eceff1", "subtext": "#90a4ae", "border": "#37414d",
         "accent": "#26a69a", "accent_text": "#04302b", "header": "#263038",
         "button": "#2b333d", "selection": "#26a69a", "selection_text": "#04302b",
-        "surface_variant": "#2f3a44", "hover": "#33414b",
+        "surface_variant": "#2f3a44", "hover": "#33414b", "link": "#5ec8bd",
     },
 }
 
@@ -98,6 +99,13 @@ THEME_CHOICES = [
     ("dark", "Dark"),
 ]
 DEFAULT_THEME = "stitch"
+
+
+def link_color() -> QColor:
+    """Product-name link color for the active theme (harmonizes per theme)."""
+    mode = QSettings().value("theme", DEFAULT_THEME) or DEFAULT_THEME
+    theme = THEMES.get(mode, THEMES[DEFAULT_THEME])
+    return QColor(theme["link"])
 
 
 def _palette(t: dict) -> QPalette:

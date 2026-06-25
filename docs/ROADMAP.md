@@ -267,36 +267,30 @@ Incremental fixes/features shipped after Phase 28 (not numbered phases):
 - **Logos:** lookup falls back to the domain word for adapter-less sites; added
   Teknosa, Vatan Bilgisayar, Akakçe, Media Markt, Trendyol.
 
+### Phase 29 — "Never" auto-refresh option
+**Never** added to the auto-refresh dropdown; selecting it stops the refresh
+`QTimer` so the app tracks **only on demand** (manual "Refresh All" / per-row).
+New `_apply_refresh_interval` guards the `0` case (`QTimer.start(0)` would
+otherwise fire continuously); persisted in `QSettings` and restored on launch.
+
+### Phase 30 — Theme-aware link (URL) color
+Each theme gained a tuned `link` token, and `link_color()` reads the active
+theme — so the product-name link harmonizes per theme instead of a fixed blue.
+Changing the theme reloads the table so the new color applies live.
+
+### Phase 31 — Refresh progress counter
+The bottom-left status bar shows a live `done/total` counter ("Refreshing
+15/100…") that ticks up in `_on_refreshed` as each async fetch finishes.
+
+### Phase 32 — Inline price-change arrow in the Price column
+Price cells show **red ▲ up / green ▼ down** next to the price when it changed,
+and nothing when a later scan finds no change. Price colors now match the
+notification convention (Phase 20's yellow-up replaced by red for price; stock
+colors unchanged).
+
 ---
 
 ## Upcoming
-
-### Phase 29 — "Never" auto-refresh option
-Add **Never** to the auto-refresh interval dropdown. Selecting it stops the
-refresh `QTimer` so the app tracks **only on demand** (manual "Refresh All" or
-per-row Refresh). Persisted in `QSettings` and restored on launch like the other
-intervals. UI-only; no schema.
-
-### Phase 30 — Theme-aware link (URL) color
-The product-name link is a hardcoded blue (`#1a4fd6`) that clashes with some
-themes. Drive it from the active theme so it harmonizes with the other text
-colors while staying recognizable as a link — add a `link` token per theme in
-`ui/theme.py` and apply it in `_append_row` instead of the fixed color.
-
-### Phase 31 — Refresh progress counter
-The status bar shows "Refreshing N product(s)…"; make it a live
-**completed/total** counter — "Refreshing 15/100…", "25/100…", "95/100…" —
-incremented in `_on_refreshed` as each async fetch finishes, so progress is
-visible at a glance in the bottom-left. UI-only; no schema.
-
-### Phase 32 — Inline price-change arrow in the Price column
-Show a small arrow next to the price reflecting the last scan's change: **down =
-green, up = red** (matching the notification convention). On a later scan with
-**no change**, clear the arrow or replace it with a neutral marker (e.g. a
-dash/dot). Builds on Phase 20's directional cell color by adding an explicit
-icon and a "no change" state. Driven by `price_changed` / `prev_price`; UI-only.
-
-**Next:** Phase 29 → 30 → 31 → 32.
 
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome
 alive across a batch; low value now that the fast path skips Chrome for most

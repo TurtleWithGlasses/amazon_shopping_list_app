@@ -47,11 +47,13 @@ from ui.image_cache import ImageLoader
 from ui.logos import logo_key, logo_pixmap
 from ui.notifications import TrayChannel
 from ui.settings_dialog import SettingsDialog
+from ui.theme import link_color
 
 _PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
-_INCREASE_COLOR = QColor("#c9a000")  # yellow/gold: price or stock went up
+_INCREASE_COLOR = QColor("#c9a000")  # yellow/gold: stock level went up
 _DECREASE_COLOR = QColor("#2e9e44")  # green: price or stock went down
 _CHANGED_COLOR = QColor("#e8830c")   # orange: changed, direction indeterminate
+_PRICE_UP_COLOR = QColor("#cc3b3b")  # red: price rose (buyer's view; matches notifications)
 
 (COL_NUM, COL_MOVE, COL_LOGO, COL_IMAGE, COL_NAME,
  COL_PRICE, COL_STOCK, COL_CHECKED, COL_STATUS, COL_ACTIONS) = range(10)
@@ -75,6 +77,7 @@ REFRESH_INTERVAL_OPTIONS = [
     ("15 minutes", 15 * 60 * 1000),
     ("30 minutes", 30 * 60 * 1000),
     ("1 hour", 60 * 60 * 1000),
+    ("Never", 0),  # 0 = no auto-refresh; track only on manual command
 ]
 SNAPSHOT_INTERVAL_MS = int(os.environ.get("PRICETRACKER_SNAPSHOT_MS", 60 * 60 * 1000))   # 1 hour
 
@@ -101,6 +104,7 @@ class MainWindow(QMainWindow):
         self._scrape_pool.setMaxThreadCount(3)
         self._tasks = []          # keep refs so QRunnables aren't GC'd
         self._pending_refresh = 0
+        self._refresh_total = 0
         # Per-row widgets, keyed by product id (rebuilt on every reload()).
         self._status_cells = {}        # product id -> status QLabel
         self._row_refresh_buttons = {}  # product id -> per-row Refresh button
@@ -335,7 +339,7 @@ class MainWindow(QMainWindow):
         name_item = QTableWidgetItem(product.name or product.url)
         name_item.setToolTip(f"Open: {product.url}")
         name_item.setData(Qt.ItemDataRole.UserRole, product.url)
-        name_item.setForeground(QColor("#1a4fd6"))  # link blue
+        name_item.setForeground(link_color())  # theme-harmonized link color
         link_font = name_item.font()
         link_font.setUnderline(True)
         name_item.setFont(link_font)
@@ -345,6 +349,11 @@ class MainWindow(QMainWindow):
         price_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         if product.price_changed and product.prev_price is not None:
             price_item.setForeground(self._price_change_color(product.prev_price, product.last_price))
+            # Inline arrow next to the price (red ▲ up / green ▼ down). On a later
+            # scan with no change, price_changed is False so the arrow disappears.
+            if product.last_price is not None:
+                arrow = "▲" if product.last_price > product.prev_price else "▼"
+                price_item.setText(f"{format_price(product.last_price, product.currency)}  {arrow}")
             price_item.setToolTip(f"Was: {format_price(product.prev_price, product.currency)}")
         self.table.setItem(row, COL_PRICE, price_item)
 
@@ -374,7 +383,7 @@ class MainWindow(QMainWindow):
     def _price_change_color(prev, new) -> QColor:
         if prev is None or new is None or new == prev:
             return _CHANGED_COLOR
-        return _INCREASE_COLOR if new > prev else _DECREASE_COLOR
+        return _PRICE_UP_COLOR if new > prev else _DECREASE_COLOR  # red up, green down
 
     @staticmethod
     def _stock_change_color(prev, new) -> QColor:
@@ -582,12 +591,13 @@ class MainWindow(QMainWindow):
         self._refresh_report = report
         self._refresh_events = []
         self._pending_refresh = len(products)
+        self._refresh_total = len(products)
         self.refresh_button.setEnabled(False)
         for button in self._row_refresh_buttons.values():
             button.setEnabled(False)  # no single-row refresh mid-batch
         for product in products:
             self._set_row_status(product.id, "refreshing")
-        self.statusBar().showMessage(f"Refreshing {self._pending_refresh} product(s)…")
+        self.statusBar().showMessage(f"Refreshing 0/{self._refresh_total}…")
         for product in products:
             self._start_task(product.url, key=product.id, on_finished=self._on_refreshed)
 
@@ -612,6 +622,8 @@ class MainWindow(QMainWindow):
         else:
             self._set_row_status(product_id, "error", data.error or "Scrape failed")
         self._pending_refresh -= 1
+        done = self._refresh_total - self._pending_refresh
+        self.statusBar().showMessage(f"Refreshing {done}/{self._refresh_total}…")
         if self._pending_refresh <= 0:
             self._finalize_refresh()
 
@@ -764,10 +776,17 @@ class MainWindow(QMainWindow):
 
     # --- scheduling & system tray ------------------------------------------
 
+    def _apply_refresh_interval(self, ms) -> None:
+        """Start the auto-refresh timer, or stop it when 'Never' (ms 0) is set."""
+        if ms and int(ms) > 0:
+            self._refresh_timer.start(int(ms))
+        else:
+            self._refresh_timer.stop()  # "Never" — manual refresh only
+
     def _start_timers(self) -> None:
         self._refresh_timer = QTimer(self)
         self._refresh_timer.timeout.connect(self._auto_refresh)
-        self._refresh_timer.start(self.interval_combo.currentData())
+        self._apply_refresh_interval(self.interval_combo.currentData())
 
         self._snapshot_timer = QTimer(self)
         self._snapshot_timer.timeout.connect(self._take_snapshot)
@@ -782,8 +801,11 @@ class MainWindow(QMainWindow):
         ms = self.interval_combo.currentData()
         self._settings.setValue("refresh_interval_ms", ms)
         if hasattr(self, "_refresh_timer"):
-            self._refresh_timer.start(ms)  # applies immediately
-        self.statusBar().showMessage(f"Auto-refresh every {self.interval_combo.currentText()}")
+            self._apply_refresh_interval(ms)  # applies immediately
+        if ms and int(ms) > 0:
+            self.statusBar().showMessage(f"Auto-refresh every {self.interval_combo.currentText()}")
+        else:
+            self.statusBar().showMessage("Auto-refresh off — use Refresh All to check manually")
 
     def _build_tray(self) -> None:
         icon = app_icon()
@@ -962,6 +984,8 @@ class MainWindow(QMainWindow):
 
     def _open_settings(self) -> None:
         SettingsDialog(self).exec()
+        # Theme may have changed — rebuild rows so the link color follows it.
+        self.reload()
         # Name may have changed — refresh the banner.
         name = auth.current_display_name()
         self.user_label.setText(f"Signed in as {name}" if name else "")
