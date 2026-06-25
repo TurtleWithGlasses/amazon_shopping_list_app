@@ -251,16 +251,56 @@ tonal pill buttons, filled-primary CTAs (`Add Product` / `Refresh All`), filled
 rounded inputs, card-like table, refined header/scrollbars; transparent
 `#rowcell` wrappers so rows/selection render consistently.
 
+### Post-v0.5.0 fixes & polish (v0.6.x – v0.7.0)
+Incremental fixes/features shipped after Phase 28 (not numbered phases):
+- **Scraping / build:** bundled Selenium's lazily-imported Chrome submodules so
+  browser-fallback scraping works in the packaged app; Sinerji/İtopya now wait
+  for the title *text* (JS-rendered SPA) instead of mere element presence.
+- **Price graph:** single line with hoverable dots only at price changes, marked
+  at **both ends** of each segment; tooltips show price, time, and the +/- delta.
+- **Notifications:** manual "Refresh All" now notifies (was auto-refresh only);
+  per-product **list** format with directional price arrows (red/up = rose,
+  green/down = fell) and the **store name** leading each line.
+- **Window state:** maximized/full-screen restored after close-to-tray or restart.
+- **Duplicate guard:** adding an already-tracked URL is blocked with a warning
+  (canonical URL compare; normalizes Amazon /dp vs /gp).
+- **Logos:** lookup falls back to the domain word for adapter-less sites; added
+  Teknosa, Vatan Bilgisayar, Akakçe, Media Markt, Trendyol.
+
 ---
 
 ## Upcoming
 
-Nothing queued — the roadmap through Phase 28 is shipped (v0.5.0). Possible
-future work:
-- **Phase 21 Part D — persistent browser reuse** (deferred): keep one headless
-  Chrome alive across a "Refresh All" batch to save its ~2–5s startup. Lower
-  value now that the fast path skips Chrome for most sites; revisit only if
-  browser-fallback sites come to dominate a refresh.
+### Phase 29 — "Never" auto-refresh option
+Add **Never** to the auto-refresh interval dropdown. Selecting it stops the
+refresh `QTimer` so the app tracks **only on demand** (manual "Refresh All" or
+per-row Refresh). Persisted in `QSettings` and restored on launch like the other
+intervals. UI-only; no schema.
+
+### Phase 30 — Theme-aware link (URL) color
+The product-name link is a hardcoded blue (`#1a4fd6`) that clashes with some
+themes. Drive it from the active theme so it harmonizes with the other text
+colors while staying recognizable as a link — add a `link` token per theme in
+`ui/theme.py` and apply it in `_append_row` instead of the fixed color.
+
+### Phase 31 — Refresh progress counter
+The status bar shows "Refreshing N product(s)…"; make it a live
+**completed/total** counter — "Refreshing 15/100…", "25/100…", "95/100…" —
+incremented in `_on_refreshed` as each async fetch finishes, so progress is
+visible at a glance in the bottom-left. UI-only; no schema.
+
+### Phase 32 — Inline price-change arrow in the Price column
+Show a small arrow next to the price reflecting the last scan's change: **down =
+green, up = red** (matching the notification convention). On a later scan with
+**no change**, clear the arrow or replace it with a neutral marker (e.g. a
+dash/dot). Builds on Phase 20's directional cell color by adding an explicit
+icon and a "no change" state. Driven by `price_changed` / `prev_price`; UI-only.
+
+**Next:** Phase 29 → 30 → 31 → 32.
+
+*Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome
+alive across a batch; low value now that the fast path skips Chrome for most
+sites, so revisit only if browser-fallback sites come to dominate a refresh.
 
 ---
 
