@@ -4,7 +4,7 @@
 ; Output: installer\Output\PriceTracker-Setup.exe
 
 #define AppName "Price Tracker"
-#define AppVersion "0.8.2"
+#define AppVersion "0.8.3"
 #define AppExe "PriceTracker.exe"
 
 [Setup]

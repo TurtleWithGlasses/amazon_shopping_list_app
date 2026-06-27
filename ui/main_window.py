@@ -558,10 +558,11 @@ class MainWindow(QMainWindow):
         product = repo.get_product(product_id)
         if product is None:
             return
+        # NOTE: don't disable this row's button — it currently has keyboard focus
+        # (the user just clicked it), and disabling a focused widget makes Qt move
+        # focus elsewhere, scrolling the table away. Re-clicks are already blocked
+        # by the _single_active gate above, and the "⟳" status shows it's busy.
         self._single_active.add(product_id)
-        button = self._row_refresh_buttons.get(product_id)
-        if button is not None:
-            button.setEnabled(False)
         self._set_row_status(product_id, "refreshing")
         self.statusBar().showMessage(f"Refreshing {product.name or product.url}…")
         self._start_task(product.url, key=product_id, on_finished=self._on_one_refreshed)
@@ -577,11 +578,8 @@ class MainWindow(QMainWindow):
         else:
             message = data.error or "Scrape failed"
         # Update only this row in place (no full reload) so the scroll position
-        # and focus stay put, then re-enable its button and set the indicator.
+        # and focus stay put, then set the indicator.
         self._update_row(product_id)
-        button = self._row_refresh_buttons.get(product_id)
-        if button is not None:
-            button.setEnabled(True)
         if ok:
             self._set_row_status(product_id, "ok")
             self.statusBar().showMessage("Refresh complete")
