@@ -349,6 +349,21 @@ than a paid search API.
 - A quiet, **dismissible** suggestions strip; everything human-confirmed; results
   feed discovery/groups.
 
+### Phase 37 — Price trend indicator (rising / falling / stable)
+Mark each product by its **tendency over a window** (default 7 days) — distinct
+from Phase 32, which shows only the last scan's move. No ML; reads the existing
+`PriceHistory`.
+- Compute from history in the window: a least-squares **slope** (robust to a
+  single blip) or net % change start→end, classified with a **stability band** —
+  **falling** (green ▼ / 📉), **rising** (red ▲ / 📈), **stable** (→), or
+  **unknown** when there are too few points. Colors match Phase 32 (down green,
+  up red).
+- Show as a **Trend column / badge** with a tooltip giving the % change + window;
+  let the user **sort by trend** to spot what's dropping this week. Window could
+  reuse the existing timescale options (day / week / month).
+- **Perf:** batch the history fetch (one query) or cache the computed trend and
+  recompute after each refresh — never per-row on every reload. No new deps.
+
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome
 alive across a batch; low value now that the fast path skips Chrome for most
 sites, so revisit only if browser-fallback sites come to dominate a refresh.
