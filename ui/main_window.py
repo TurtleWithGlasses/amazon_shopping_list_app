@@ -47,9 +47,9 @@ from ui.image_cache import ImageLoader
 from ui.logos import logo_key, logo_pixmap
 from ui.notifications import TrayChannel
 from ui.settings_dialog import SettingsDialog
+from ui.formatting import format_price
 from ui.theme import link_color
 
-_PREFIX_SYMBOLS = {"$", "€", "£", "¥", "₺", "₹"}
 _INCREASE_COLOR = QColor("#c9a000")  # yellow/gold: stock level went up
 _DECREASE_COLOR = QColor("#2e9e44")  # green: price or stock went down
 _CHANGED_COLOR = QColor("#e8830c")   # orange: changed, direction indeterminate
@@ -80,15 +80,6 @@ REFRESH_INTERVAL_OPTIONS = [
     ("Never", 0),  # 0 = no auto-refresh; track only on manual command
 ]
 SNAPSHOT_INTERVAL_MS = int(os.environ.get("PRICETRACKER_SNAPSHOT_MS", 60 * 60 * 1000))   # 1 hour
-
-
-def format_price(price, currency: str) -> str:
-    if price is None:
-        return "N/A"
-    formatted = f"{price:,.2f}"
-    if currency in _PREFIX_SYMBOLS:
-        return f"{currency}{formatted}"
-    return f"{formatted} {currency}" if currency else formatted
 
 
 class MainWindow(QMainWindow):
@@ -129,6 +120,7 @@ class MainWindow(QMainWindow):
         self._refresh_title = "Price / stock changed"
         self._refresh_report = False  # open the changes report window on finalize
         self._refresh_events = []  # detailed change records (notification + report)
+        self._target_hits = []     # products whose price hit the target this batch
 
         self._build_menu()
         self._build_central()
@@ -168,6 +160,11 @@ class MainWindow(QMainWindow):
         quit_action = QAction("E&xit", self)
         quit_action.triggered.connect(self._quit)
         file_menu.addAction(quit_action)
+
+        # Lists the groups directly (rebuilt each time it opens), with
+        # "Manage groups…" below them — one click to open any group.
+        self._groups_menu = self.menuBar().addMenu("&Groups")
+        self._groups_menu.aboutToShow.connect(self._populate_groups_menu)
 
     def _build_central(self) -> None:
         central = QWidget()
@@ -228,6 +225,9 @@ class MainWindow(QMainWindow):
         header.setSectionsClickable(True)
         header.sectionClicked.connect(self._on_header_clicked)
         self.table.cellClicked.connect(self._open_link)
+        # Right-click a row → add to / remove from groups (Phase 34).
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_row_menu)
         # Widget cells (arrows/logo/image/status/actions) don't paint the row
         # selection brush like plain item cells do; tint them to match.
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
@@ -313,16 +313,24 @@ class MainWindow(QMainWindow):
     def _fill_value_cells(self, row: int, product) -> None:
         """Set the price / stock / last-checked cells for a row from a product.
         Shared by row creation and the in-place single-row refresh update."""
-        price_item = QTableWidgetItem(format_price(product.last_price, product.currency))
+        text = format_price(product.last_price, product.currency)
+        tips = []
+        if product.price_changed and product.prev_price is not None and product.last_price is not None:
+            # Inline arrow next to the price (red ▲ up / green ▼ down). On a later
+            # scan with no change, price_changed is False so the arrow disappears.
+            text += "  " + ("▲" if product.last_price > product.prev_price else "▼")
+            tips.append(f"Was: {format_price(product.prev_price, product.currency)}")
+        target = getattr(product, "target_price", None)
+        if target is not None:
+            tips.append(f"Target: {format_price(target, product.currency)}")
+            if self._target_met(product):
+                text += "  🎯"  # current price is at/below the user's target
+        price_item = QTableWidgetItem(text)
         price_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         if product.price_changed and product.prev_price is not None:
             price_item.setForeground(self._price_change_color(product.prev_price, product.last_price))
-            # Inline arrow next to the price (red ▲ up / green ▼ down). On a later
-            # scan with no change, price_changed is False so the arrow disappears.
-            if product.last_price is not None:
-                arrow = "▲" if product.last_price > product.prev_price else "▼"
-                price_item.setText(f"{format_price(product.last_price, product.currency)}  {arrow}")
-            price_item.setToolTip(f"Was: {format_price(product.prev_price, product.currency)}")
+        if tips:
+            price_item.setToolTip(" · ".join(tips))
         self.table.setItem(row, COL_PRICE, price_item)
 
         stock_item = QTableWidgetItem(product.last_stock or "Unknown")
@@ -412,6 +420,23 @@ class MainWindow(QMainWindow):
         if prev_qty is not None and new_qty is not None and prev_qty != new_qty:
             return _INCREASE_COLOR if new_qty > prev_qty else _DECREASE_COLOR
         return _CHANGED_COLOR  # changed but direction indeterminate
+
+    @staticmethod
+    def _target_met(product) -> bool:
+        """True when the current price is at or below the user's target price."""
+        target = getattr(product, "target_price", None)
+        return (target is not None and product.last_price is not None
+                and product.last_price <= target)
+
+    @classmethod
+    def _target_newly_hit(cls, product) -> bool:
+        """True only when this scan moved the price from above the target to
+        at/below it — so we alert on the crossing, not on every scan after."""
+        if not cls._target_met(product):
+            return False
+        target = product.target_price
+        return bool(product.price_changed and product.prev_price is not None
+                    and product.prev_price > target)
 
     def _set_row_status(self, product_id, state: str, tooltip: str = None) -> None:
         """Update a row's fetch indicator (idle/refreshing/ok/error)."""
@@ -569,10 +594,14 @@ class MainWindow(QMainWindow):
 
     def _on_one_refreshed(self, product_id, data) -> None:
         self._single_active.discard(product_id)
-        ok, message = data.ok, None
+        ok, message, hit = data.ok, None, None
         if data.ok:
             try:
-                self._persist_scrape(product_id, data, snapshot=True)
+                product, _changed, _back, target_hit = self._persist_scrape(
+                    product_id, data, snapshot=True
+                )
+                if target_hit:
+                    hit = self._target_hit_record(product)
             except Exception as exc:
                 ok, message = False, str(exc)
         else:
@@ -583,6 +612,8 @@ class MainWindow(QMainWindow):
         if ok:
             self._set_row_status(product_id, "ok")
             self.statusBar().showMessage("Refresh complete")
+            if hit is not None:
+                self._notify_target_hits([hit])
         else:
             self._set_row_status(product_id, "error", message)
             self.statusBar().showMessage(f"Refresh failed: {message}")
@@ -609,6 +640,7 @@ class MainWindow(QMainWindow):
         self._refresh_title = title
         self._refresh_report = report
         self._refresh_events = []
+        self._target_hits = []
         self._pending_refresh = len(products)
         self._refresh_total = len(products)
         self.refresh_button.setEnabled(False)
@@ -650,7 +682,8 @@ class MainWindow(QMainWindow):
         """Apply one scrape result to the store and log history when warranted.
 
         Shared by the batch refresh and the per-row refresh. Returns
-        ``(product, changed, back_in_stock)`` or ``(None, False, False)``.
+        ``(product, changed, back_in_stock, target_hit)`` or ``(None, False,
+        False, False)``.
         """
         product = repo.apply_scrape_result(
             product_id,
@@ -661,7 +694,7 @@ class MainWindow(QMainWindow):
             image_url=data.image_url,
         )
         if product is None:
-            return None, False, False
+            return None, False, False, False
         changed = product.price_changed or product.stock_changed
         # Log history on a manual snapshot, OR whenever a change is detected — so
         # the graph captures every price/stock change, not just hourly ones.
@@ -671,14 +704,25 @@ class MainWindow(QMainWindow):
             )
         back = bool(product.stock_changed
                     and self._is_back_in_stock(product.prev_stock, product.last_stock))
-        return product, changed, back
+        return product, changed, back, self._target_newly_hit(product)
+
+    def _target_hit_record(self, product) -> dict:
+        return {
+            "name": product.name or product.url,
+            "site": self._site_name(product.url),
+            "currency": product.currency,
+            "price": product.last_price,
+            "target": product.target_price,
+        }
 
     def _apply_refresh_result(self, product_id, data) -> None:
-        product, changed, back = self._persist_scrape(
+        product, changed, back, target_hit = self._persist_scrape(
             product_id, data, snapshot=self._refresh_snapshot
         )
         if product is None:
             return
+        if target_hit:
+            self._target_hits.append(self._target_hit_record(product))
         label = product.name or product.url
         if changed:
             self._refresh_events.append({
@@ -741,6 +785,19 @@ class MainWindow(QMainWindow):
             lines.append(f"…and {remaining} more")
         return "\n".join(lines)
 
+    def _notify_target_hits(self, hits) -> None:
+        """Send a target-price-reached alert (always — it's an explicit alert)."""
+        if not hits:
+            return
+        lines = []
+        for h in hits:
+            name = (h["name"] or "")[:55]
+            prefix = f"{h['site']} · " if h.get("site") else ""
+            price = format_price(h["price"], h["currency"])
+            target = format_price(h["target"], h["currency"])
+            lines.append(f"• {prefix}{name}\n    {price}  (target {target})")
+        self._notifications.notify("🎯 Target price reached", "\n".join(lines))
+
     def _finalize_refresh(self) -> None:
         self.refresh_button.setEnabled(True)
         self.reload()
@@ -748,6 +805,7 @@ class MainWindow(QMainWindow):
         total = len(self._refresh_events)
         if self._refresh_notify and self._refresh_events:
             self._notifications.notify(self._refresh_title, self._changes_message())
+        self._notify_target_hits(self._target_hits)
         self.statusBar().showMessage(
             f"Refresh complete — {total} change(s) detected" if total else "Refresh complete"
         )
@@ -1001,6 +1059,75 @@ class MainWindow(QMainWindow):
             f"<a href='https://github.com/{GITHUB_REPO}'>github.com/{GITHUB_REPO}</a>",
         )
 
+    # --- groups (Phase 34) -------------------------------------------------
+
+    def _populate_groups_menu(self) -> None:
+        """Rebuild the Groups menu: a row per group (opens it), then Manage…"""
+        self._groups_menu.clear()
+        groups = repo.list_groups()
+        for group in groups:
+            self._groups_menu.addAction(
+                f"{group.name}  ({group.member_count})",
+                partial(self._open_group, group.id, group.name),
+            )
+        if groups:
+            self._groups_menu.addSeparator()
+        self._groups_menu.addAction("Manage groups…", self._open_groups)
+
+    def _open_group(self, group_id, group_name) -> None:
+        from ui.group_view_dialog import GroupViewDialog
+        GroupViewDialog(group_id, group_name, parent=self).exec()
+
+    def _open_groups(self) -> None:
+        from ui.groups_dialog import GroupsDialog
+        GroupsDialog(self).exec()
+
+    def _show_row_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        product_id = next((pid for pid, r in self._row_for_product.items() if r == row), None)
+        if product_id is None:
+            return
+        groups = repo.list_groups()
+        current = {g.id for g in repo.groups_for_product(product_id)}
+
+        menu = QMenu(self)
+        add_menu = menu.addMenu("Add to group")
+        for group in groups:
+            if group.id in current:
+                continue
+            add_menu.addAction(group.name, partial(self._add_to_group, group.id, product_id))
+        if add_menu.actions():
+            add_menu.addSeparator()
+        add_menu.addAction("New group…", partial(self._add_to_new_group, product_id))
+
+        if current:
+            remove_menu = menu.addMenu("Remove from group")
+            for group in groups:
+                if group.id in current:
+                    remove_menu.addAction(
+                        group.name, partial(self._remove_from_group, group.id, product_id)
+                    )
+        menu.addSeparator()
+        menu.addAction("Manage groups…", self._open_groups)
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _add_to_group(self, group_id, product_id) -> None:
+        repo.add_to_group(group_id, product_id)
+        self.statusBar().showMessage("Added to group")
+
+    def _add_to_new_group(self, product_id) -> None:
+        name, ok = QInputDialog.getText(self, "New group", "Group name:")
+        if ok and name.strip():
+            group = repo.create_group(name.strip())
+            repo.add_to_group(group.id, product_id)
+            self.statusBar().showMessage(f"Added to new group '{name.strip()}'")
+
+    def _remove_from_group(self, group_id, product_id) -> None:
+        repo.remove_from_group(group_id, product_id)
+        self.statusBar().showMessage("Removed from group")
+
     def _open_settings(self) -> None:
         SettingsDialog(self).exec()
         # Theme may have changed — rebuild rows so the link color follows it.
@@ -1059,10 +1186,12 @@ class MainWindow(QMainWindow):
         product = repo.get_product(product_id)
         if product is None:
             return
-        dialog = EditProductDialog(product.name or "", product.url, parent=self)
+        dialog = EditProductDialog(
+            product.name or "", product.url, getattr(product, "target_price", None), parent=self
+        )
         if dialog.exec() == EditProductDialog.DialogCode.Accepted:
-            name, url = dialog.values()
-            repo.update_product(product_id, name=name, url=url)
+            name, url, target = dialog.values()
+            repo.update_product(product_id, name=name, url=url, target_price=target)
             self.reload()
 
     def _delete_product(self, product_id: int) -> None:

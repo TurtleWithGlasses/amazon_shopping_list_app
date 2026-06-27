@@ -288,39 +288,32 @@ and nothing when a later scan finds no change. Price colors now match the
 notification convention (Phase 20's yellow-up replaced by red for price; stock
 colors unchanged).
 
+### Phase 33 — Target-price alerts
+Per-product **target price** (set in the Edit dialog): the price cell shows a 🎯
+badge when the current price is at/below it, and a **"🎯 Target price reached"**
+alert (tray + Telegram) fires on the scan that crosses below — not on every scan
+after, re-arming if it goes back above. Stored as `products.target_price`,
+checked in `_persist_scrape`. (Percent-drop / recent-average variant deferred.)
+
+### Phase 34 — Product groups (manual comparison sets)
+User-defined comparison sets. New `groups` + `group_members` tables (both
+backends; RLS on Supabase). Right-click a product → add to / remove from groups;
+the **Groups** menu lists every group (one click opens it) plus a manager
+(create / rename / delete). The **group view** shows members **cheapest-first**
+with a color swatch, logo, clickable name link, current price, and 30-day low
+(cheapest highlighted), above a **combined price graph** — each line + legend
+tagged by store, with hover tooltips (`site · product · price · time`); a
+draggable splitter sizes the table vs. graph. Membership is a reference (FK
+`on delete cascade`), so deleting/refreshing a product flows through
+automatically. Group-level alerts can layer on later via Phase 33.
+
 ---
 
 ## Upcoming
 
-A connected set of phases that turn the tracker into a buying/decision tool.
-Built to need **no paid APIs** — discovery and recommendations reuse the
-existing scraper. Suggested order: 33 → 34 → 35 → 36 (33 is standalone and
-highest value; 34 is the hub the others feed into).
-
-### Phase 33 — Target-price alerts
-Today the app notifies on *any* change. Add per-product **alert rules** so it
-notifies only when it matters:
-- **Below target:** "notify when price ≤ ₺X."
-- **Percent drop:** "notify when ≥ N% below its recent average" (reuses the
-  stored price history for the average / all-time low).
-- A row badge when an alert condition is met; alerts ride the existing
-  tray + Telegram channels and respect the notification format.
-- Schema: a small `alerts` table (product_id, type, threshold) or alert columns
-  on `products`. Checked in `_persist_scrape` after each scan.
-
-### Phase 34 — Product groups (manual comparison sets)
-User-defined groups to compare listings side by side — the **hub** for the next
-two phases. Manual (not auto) because a group may hold *the same* product across
-sites **or** *related* products (e.g. RTX 5080 vs 5090) — only the user knows
-the intent.
-- **Model:** `groups` (id, user_id, name) + a many-to-many product↔group link (a
-  product can be in several groups).
-- **Group view:** members with site logo, current price + ▲/▼ arrow, and
-  lowest-in-30-days; **cheapest highlighted**; a combined graph overlays each
-  member's price line. Show **per-member** prices (no single "group price", since
-  members may differ).
-- **Group-level alerts** (with Phase 33): "notify when the cheapest member ≤ ₺X."
-- UI-only logic over a small schema; reuses the existing graph/notify pipeline.
+The remaining "buying tool" set — built to need **no paid APIs** (discovery and
+recommendations reuse the existing scraper). Suggested order: 35 → 36, with 37
+(trend) and 38 (cart) as self-contained additions.
 
 ### Phase 35 — "Find it cheaper elsewhere" (comparison-site discovery)
 Suggest the same product on other sites — **free**, by leaning on a price-

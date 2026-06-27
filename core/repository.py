@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from sqlalchemy import func, select
 
 from .db import session_scope
-from .models import PriceHistory, Product, utcnow
+from .models import Group, GroupMember, PriceHistory, Product, utcnow
 
 
 def _retailer_from_url(url: str) -> str:
@@ -79,12 +79,16 @@ def get_product(product_id: int) -> Optional[Product]:
         return session.get(Product, product_id)
 
 
+_UNSET = object()  # sentinel: "argument not provided" (vs. None = clear the value)
+
+
 def update_product(
     product_id: int,
     name: Optional[str] = None,
     url: Optional[str] = None,
+    target_price=_UNSET,
 ) -> Optional[Product]:
-    """Edit user-editable fields (name / URL)."""
+    """Edit user-editable fields (name / URL / target price)."""
     with session_scope() as session:
         product = session.get(Product, product_id)
         if product is None:
@@ -94,6 +98,8 @@ def update_product(
         if url is not None:
             product.url = url
             product.retailer = _retailer_from_url(url)
+        if target_price is not _UNSET:
+            product.target_price = target_price  # float to set, None to clear
         return product
 
 
@@ -179,4 +185,96 @@ def get_price_history(
         if since is not None:
             stmt = stmt.where(PriceHistory.captured_at >= since)
         stmt = stmt.order_by(PriceHistory.captured_at)
+        return list(session.scalars(stmt))
+
+
+# --- groups (Phase 34) ----------------------------------------------------
+
+def create_group(name: str, user_id: Optional[int] = None) -> Group:
+    with session_scope() as session:
+        group = Group(name=name, user_id=user_id)
+        session.add(group)
+        session.flush()
+        group.member_count = 0
+        return group
+
+
+def list_groups(user_id: Optional[int] = None) -> List[Group]:
+    with session_scope() as session:
+        stmt = select(Group).order_by(Group.created_at)
+        if user_id is not None:
+            stmt = stmt.where(Group.user_id == user_id)
+        groups = list(session.scalars(stmt))
+        for group in groups:
+            group.member_count = session.scalar(
+                select(func.count()).select_from(GroupMember)
+                .where(GroupMember.group_id == group.id)
+            ) or 0
+        return groups
+
+
+def rename_group(group_id: int, name: str) -> Optional[Group]:
+    with session_scope() as session:
+        group = session.get(Group, group_id)
+        if group is None:
+            return None
+        group.name = name
+        return group
+
+
+def delete_group(group_id: int) -> bool:
+    with session_scope() as session:
+        group = session.get(Group, group_id)
+        if group is None:
+            return False
+        session.delete(group)  # cascades to group_members
+        return True
+
+
+def add_to_group(group_id: int, product_id: int) -> bool:
+    """Add a product to a group; returns False if it was already a member."""
+    with session_scope() as session:
+        exists = session.scalar(
+            select(GroupMember).where(
+                GroupMember.group_id == group_id, GroupMember.product_id == product_id
+            )
+        )
+        if exists is not None:
+            return False
+        session.add(GroupMember(group_id=group_id, product_id=product_id))
+        return True
+
+
+def remove_from_group(group_id: int, product_id: int) -> bool:
+    with session_scope() as session:
+        member = session.scalar(
+            select(GroupMember).where(
+                GroupMember.group_id == group_id, GroupMember.product_id == product_id
+            )
+        )
+        if member is None:
+            return False
+        session.delete(member)
+        return True
+
+
+def group_members(group_id: int) -> List[Product]:
+    with session_scope() as session:
+        stmt = (
+            select(Product)
+            .join(GroupMember, GroupMember.product_id == Product.id)
+            .where(GroupMember.group_id == group_id)
+            .order_by(Product.position, Product.created_at)
+        )
+        return list(session.scalars(stmt))
+
+
+def groups_for_product(product_id: int) -> List[Group]:
+    with session_scope() as session:
+        stmt = (
+            select(Group)
+            .join(GroupMember, GroupMember.group_id == Group.id)
+            .where(GroupMember.product_id == product_id)
+            .order_by(Group.created_at)
+        )
         return list(session.scalars(stmt))

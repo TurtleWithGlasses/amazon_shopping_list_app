@@ -55,6 +55,7 @@ class CloudProduct:
     position: int
     created_at: Optional[datetime]
     last_checked: Optional[datetime]
+    target_price: Optional[float] = None
 
 
 @dataclass
@@ -105,6 +106,7 @@ def _to_product(row: dict) -> CloudProduct:
         position=row.get("position") or 0,
         created_at=_parse_dt(row.get("created_at")),
         last_checked=_parse_dt(row.get("last_checked")),
+        target_price=row.get("target_price"),
     )
 
 
@@ -172,14 +174,19 @@ def get_product(product_id) -> Optional[CloudProduct]:
     return _to_product(rows[0]) if rows else None
 
 
+_UNSET = object()  # sentinel: "argument not provided" (vs. None = clear the value)
+
+
 @_resilient
-def update_product(product_id, name=None, url=None) -> Optional[CloudProduct]:
+def update_product(product_id, name=None, url=None, target_price=_UNSET) -> Optional[CloudProduct]:
     updates = {}
     if name is not None:
         updates["name"] = name
     if url is not None:
         updates["url"] = url
         updates["retailer"] = _retailer_from_url(url)
+    if target_price is not _UNSET:
+        updates["target_price"] = target_price  # float to set, None to clear
     if not updates:
         return get_product(product_id)
     rows = get_client().table("products").update(updates).eq("id", product_id).execute().data
@@ -243,3 +250,93 @@ def get_price_history(product_id, since=None) -> List[CloudHistory]:
         query = query.gte("captured_at", since.isoformat())
     rows = query.order("captured_at").execute().data
     return [_to_history(r) for r in rows]
+
+
+# --- groups (Phase 34) ----------------------------------------------------
+
+@dataclass
+class CloudGroup:
+    id: int
+    name: str
+    member_count: int = 0
+
+
+@_resilient
+def create_group(name, user_id=None) -> CloudGroup:
+    row = get_client().table("groups").insert(
+        {"user_id": user_id or current_user_id(), "name": name}
+    ).execute().data[0]
+    return CloudGroup(id=row["id"], name=row["name"], member_count=0)
+
+
+@_resilient
+def list_groups(user_id=None) -> List[CloudGroup]:
+    client = get_client()
+    rows = client.table("groups").select("*").order("created_at").execute().data
+    groups = []
+    for r in rows:
+        count = client.table("group_members").select("id", count="exact").eq(
+            "group_id", r["id"]
+        ).execute().count or 0
+        groups.append(CloudGroup(id=r["id"], name=r["name"], member_count=count))
+    return groups
+
+
+@_resilient
+def rename_group(group_id, name) -> Optional[CloudGroup]:
+    rows = get_client().table("groups").update({"name": name}).eq("id", group_id).execute().data
+    return CloudGroup(id=rows[0]["id"], name=rows[0]["name"]) if rows else None
+
+
+@_resilient
+def delete_group(group_id) -> bool:
+    rows = get_client().table("groups").delete().eq("id", group_id).execute().data
+    return bool(rows)
+
+
+@_resilient
+def add_to_group(group_id, product_id) -> bool:
+    client = get_client()
+    existing = client.table("group_members").select("id").eq(
+        "group_id", group_id
+    ).eq("product_id", product_id).execute().data
+    if existing:
+        return False
+    client.table("group_members").insert(
+        {"group_id": group_id, "product_id": product_id}
+    ).execute()
+    return True
+
+
+@_resilient
+def remove_from_group(group_id, product_id) -> bool:
+    rows = get_client().table("group_members").delete().eq(
+        "group_id", group_id
+    ).eq("product_id", product_id).execute().data
+    return bool(rows)
+
+
+@_resilient
+def group_members(group_id) -> List[CloudProduct]:
+    client = get_client()
+    member_rows = client.table("group_members").select("product_id").eq(
+        "group_id", group_id
+    ).execute().data
+    ids = [m["product_id"] for m in member_rows]
+    if not ids:
+        return []
+    rows = client.table("products").select("*").in_("id", ids).order("position").execute().data
+    return [_to_product(r) for r in rows]
+
+
+@_resilient
+def groups_for_product(product_id) -> List[CloudGroup]:
+    client = get_client()
+    member_rows = client.table("group_members").select("group_id").eq(
+        "product_id", product_id
+    ).execute().data
+    ids = [m["group_id"] for m in member_rows]
+    if not ids:
+        return []
+    rows = client.table("groups").select("*").in_("id", ids).order("created_at").execute().data
+    return [CloudGroup(id=r["id"], name=r["name"]) for r in rows]

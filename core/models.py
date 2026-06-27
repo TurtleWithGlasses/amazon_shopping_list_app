@@ -6,7 +6,15 @@
 from datetime import datetime, timezone
 from typing import List, Optional
 
-from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+)
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -30,6 +38,9 @@ class Product(Base):
     name: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     currency: Mapped[str] = mapped_column(String, default="", nullable=False)
     image_url: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
+    # User-set target price: alert (and badge) when last_price drops to/below it.
+    target_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
 
     # Latest observed values
     last_price: Mapped[Optional[float]] = mapped_column(Float, nullable=True)
@@ -71,3 +82,27 @@ class PriceHistory(Base):
 
     def __repr__(self) -> str:  # pragma: no cover - debug aid
         return f"<PriceHistory product_id={self.product_id} price={self.price} at={self.captured_at}>"
+
+
+class Group(Base):
+    """A user-defined comparison set (Phase 34). Members may be the same product
+    across sites or related products; a product can belong to several groups."""
+    __tablename__ = "groups"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    name: Mapped[str] = mapped_column(String, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
+
+
+class GroupMember(Base):
+    __tablename__ = "group_members"
+    __table_args__ = (UniqueConstraint("group_id", "product_id", name="uq_group_product"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    group_id: Mapped[int] = mapped_column(
+        ForeignKey("groups.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True, nullable=False
+    )
