@@ -14,8 +14,24 @@ from ui.main_window import MainWindow
 from ui.theme import DEFAULT_THEME, apply_theme
 
 
+def _is_invalid_refresh_token(exc: Exception) -> bool:
+    """True only for a definitive auth failure (bad/expired/used refresh token),
+    NOT a transient/network error. Right after a PC restart the network is often
+    not up yet, so restoring the session throws a connection error — we must keep
+    the saved "remember me" token in that case instead of logging the user out."""
+    status = getattr(exc, "status", None) or getattr(exc, "code", None)
+    if status in (400, 401, 403):
+        return True
+    msg = str(exc).lower()
+    return "refresh token" in msg and any(
+        w in msg for w in ("invalid", "not found", "expired", "already used", "revoked")
+    )
+
+
 def _ensure_logged_in() -> bool:
     """Log in via a saved session or the login dialog. False if the user cancels."""
+    import time
+
     from core.cloud import auth, session_store
     from ui.login_dialog import LoginDialog
 
@@ -23,13 +39,22 @@ def _ensure_logged_in() -> bool:
         return True
     token = session_store.load_refresh_token()
     if token:
-        try:
-            auth.restore_session(token)
-            # Supabase rotates refresh tokens — persist the new one.
-            session_store.save_session(auth.current_refresh_token(), auth.current_email() or "")
-            return True
-        except Exception:
-            session_store.clear_session()  # expired/invalid → fall back to login
+        for attempt in range(4):
+            try:
+                auth.restore_session(token)
+                # Supabase rotates refresh tokens — persist the new one.
+                session_store.save_session(auth.current_refresh_token(), auth.current_email() or "")
+                return True
+            except Exception as exc:
+                if _is_invalid_refresh_token(exc):
+                    session_store.clear_session()  # genuine → fall back to login
+                    break
+                # Transient (e.g. no network yet after boot): keep the saved
+                # session and retry briefly rather than logging the user out.
+                if attempt < 3:
+                    time.sleep(2)
+                else:
+                    break  # still offline — keep the token; next launch retries
     return LoginDialog().exec() == QDialog.DialogCode.Accepted
 
 
