@@ -108,6 +108,7 @@ class MainWindow(QMainWindow):
         # Per-row widgets, keyed by product id (rebuilt on every reload()).
         self._status_cells = {}        # product id -> status QLabel
         self._row_refresh_buttons = {}  # product id -> per-row Refresh button
+        self._row_for_product = {}     # product id -> table row index
         self._single_active = set()    # ids with a single-row refresh in flight
         self._really_quit = False
         self.logout_requested = False
@@ -253,6 +254,7 @@ class MainWindow(QMainWindow):
         self.table.setRowCount(0)
         self._status_cells = {}
         self._row_refresh_buttons = {}
+        self._row_for_product = {}
         for product in products:
             self._append_row(product)
         # Restore now (clamped to the new range) and again after the view
@@ -308,9 +310,49 @@ class MainWindow(QMainWindow):
             header.setSortIndicatorShown(True)
             header.setSortIndicator(self._sort_column, self._sort_order)
 
+    def _fill_value_cells(self, row: int, product) -> None:
+        """Set the price / stock / last-checked cells for a row from a product.
+        Shared by row creation and the in-place single-row refresh update."""
+        price_item = QTableWidgetItem(format_price(product.last_price, product.currency))
+        price_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if product.price_changed and product.prev_price is not None:
+            price_item.setForeground(self._price_change_color(product.prev_price, product.last_price))
+            # Inline arrow next to the price (red ▲ up / green ▼ down). On a later
+            # scan with no change, price_changed is False so the arrow disappears.
+            if product.last_price is not None:
+                arrow = "▲" if product.last_price > product.prev_price else "▼"
+                price_item.setText(f"{format_price(product.last_price, product.currency)}  {arrow}")
+            price_item.setToolTip(f"Was: {format_price(product.prev_price, product.currency)}")
+        self.table.setItem(row, COL_PRICE, price_item)
+
+        stock_item = QTableWidgetItem(product.last_stock or "Unknown")
+        stock_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if product.stock_changed and product.prev_stock:
+            stock_item.setForeground(self._stock_change_color(product.prev_stock, product.last_stock))
+            stock_item.setToolTip(f"Was: {product.prev_stock}")
+        self.table.setItem(row, COL_STOCK, stock_item)
+
+        checked = (
+            product.last_checked.strftime("%d %b %Y %H:%M") if product.last_checked else "—"
+        )
+        checked_item = QTableWidgetItem(checked)
+        checked_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.table.setItem(row, COL_CHECKED, checked_item)
+
+    def _update_row(self, product_id) -> None:
+        """Refresh just one row's value cells in place (no full reload), so the
+        scroll position and focus aren't disturbed by a single-row refresh."""
+        row = self._row_for_product.get(product_id)
+        product = repo.get_product(product_id)
+        if row is None or product is None:
+            self.reload()  # fallback: product not currently shown
+            return
+        self._fill_value_cells(row, product)
+
     def _append_row(self, product) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
+        self._row_for_product[product.id] = row  # for in-place single-row updates
 
         num_item = QTableWidgetItem(str(row + 1))  # 1-based display position
         num_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -345,31 +387,7 @@ class MainWindow(QMainWindow):
         name_item.setFont(link_font)
         self.table.setItem(row, COL_NAME, name_item)
 
-        price_item = QTableWidgetItem(format_price(product.last_price, product.currency))
-        price_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        if product.price_changed and product.prev_price is not None:
-            price_item.setForeground(self._price_change_color(product.prev_price, product.last_price))
-            # Inline arrow next to the price (red ▲ up / green ▼ down). On a later
-            # scan with no change, price_changed is False so the arrow disappears.
-            if product.last_price is not None:
-                arrow = "▲" if product.last_price > product.prev_price else "▼"
-                price_item.setText(f"{format_price(product.last_price, product.currency)}  {arrow}")
-            price_item.setToolTip(f"Was: {format_price(product.prev_price, product.currency)}")
-        self.table.setItem(row, COL_PRICE, price_item)
-
-        stock_item = QTableWidgetItem(product.last_stock or "Unknown")
-        stock_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        if product.stock_changed and product.prev_stock:
-            stock_item.setForeground(self._stock_change_color(product.prev_stock, product.last_stock))
-            stock_item.setToolTip(f"Was: {product.prev_stock}")
-        self.table.setItem(row, COL_STOCK, stock_item)
-
-        checked = (
-            product.last_checked.strftime("%d %b %Y %H:%M") if product.last_checked else "—"
-        )
-        checked_item = QTableWidgetItem(checked)
-        checked_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.table.setItem(row, COL_CHECKED, checked_item)
+        self._fill_value_cells(row, product)
 
         status_label = QLabel()
         status_label.setObjectName("rowcell")
@@ -558,9 +576,12 @@ class MainWindow(QMainWindow):
                 ok, message = False, str(exc)
         else:
             message = data.error or "Scrape failed"
-        # reload() rebuilds rows (new price/stock + a fresh, enabled button) and
-        # resets status cells; re-apply this row's result indicator afterwards.
-        self.reload()
+        # Update only this row in place (no full reload) so the scroll position
+        # and focus stay put, then re-enable its button and set the indicator.
+        self._update_row(product_id)
+        button = self._row_refresh_buttons.get(product_id)
+        if button is not None:
+            button.setEnabled(True)
         if ok:
             self._set_row_status(product_id, "ok")
             self.statusBar().showMessage("Refresh complete")

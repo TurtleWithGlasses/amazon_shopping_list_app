@@ -364,6 +364,18 @@ from Phase 32, which shows only the last scan's move. No ML; reads the existing
 - **Perf:** batch the history fetch (one query) or cache the computed trend and
   recompute after each refresh — never per-row on every reload. No new deps.
 
+### Phase 38 — Virtual shopping cart
+A cart the user builds from tracked products, showing the **live total cost**.
+- Add/remove tracked products to/from a cart (per-product quantity optional);
+  the cart lists each item with its current price and a running **total**.
+- **Prices flow through live:** since cart items reference tracked products, a
+  price change from any refresh updates the cart total automatically (reuse the
+  same `last_price`); show the per-item ▲/▼ and a total delta.
+- A cart panel/tab (or dialog) with the total pinned; optionally a cart-level
+  target alert ("notify when the cart total drops below ₺X") via Phase 33.
+- Schema: a `cart_items` table (product_id, quantity) — or reuse Phase 34 groups
+  with a "cart" flag, since a cart is essentially a group with a summed total.
+
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome
 alive across a batch; low value now that the fast path skips Chrome for most
 sites, so revisit only if browser-fallback sites come to dominate a refresh.
