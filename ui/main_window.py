@@ -1,5 +1,6 @@
 """Main application window: product table, add/refresh, edit/delete, graph, export."""
 import os
+from datetime import timezone
 from functools import partial
 from urllib.parse import urlparse
 
@@ -310,6 +311,15 @@ class MainWindow(QMainWindow):
             header.setSortIndicatorShown(True)
             header.setSortIndicator(self._sort_column, self._sort_order)
 
+    @staticmethod
+    def _format_local(dt) -> str:
+        """Format a stored (UTC) timestamp in the user's local timezone."""
+        if dt is None:
+            return "—"
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)  # local backend stores naive UTC
+        return dt.astimezone().strftime("%d %b %Y %H:%M")  # astimezone() → system local
+
     def _fill_value_cells(self, row: int, product) -> None:
         """Set the price / stock / last-checked cells for a row from a product.
         Shared by row creation and the in-place single-row refresh update."""
@@ -340,9 +350,7 @@ class MainWindow(QMainWindow):
             stock_item.setToolTip(f"Was: {product.prev_stock}")
         self.table.setItem(row, COL_STOCK, stock_item)
 
-        checked = (
-            product.last_checked.strftime("%d %b %Y %H:%M") if product.last_checked else "—"
-        )
+        checked = self._format_local(product.last_checked)
         checked_item = QTableWidgetItem(checked)
         checked_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, COL_CHECKED, checked_item)
