@@ -369,6 +369,19 @@ A cart the user builds from tracked products, showing the **live total cost**.
 - Schema: a `cart_items` table (product_id, quantity) — or reuse Phase 34 groups
   with a "cart" flag, since a cart is essentially a group with a summed total.
 
+### Phase 39 — Theme-aware graphs
+The price-history graph (and the group comparison graph) hardcode a **white
+background** and fixed axis/grid/line colors, so they clash on the dark / Stitch
+/ Material themes (see screenshot — white chart in a dark window).
+- Drive pyqtgraph styling from the active theme: background = surface (`base`),
+  axis text/labels = `text`/`subtext`, grid = `border`, and pick line/hover
+  colors that read on that background (the group view already assigns per-line
+  colors — make them theme-appropriate).
+- Add the needed values via the existing `ui/theme.py` tokens (reuse
+  `link_color()`-style accessors); apply in `ui/graph_dialog.py` and
+  `ui/group_view_dialog.py`. Re-style when the theme changes (rebuild on open is
+  enough). UI-only; no new deps.
+
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome
 alive across a batch; low value now that the fast path skips Chrome for most
 sites, so revisit only if browser-fallback sites come to dominate a refresh.
