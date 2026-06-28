@@ -2,7 +2,7 @@
 import os
 from datetime import timezone
 from functools import partial
-from urllib.parse import urlparse
+from urllib.parse import quote_plus, urlparse
 
 from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import QAction, QColor, QDesktopServices, QPalette
@@ -1090,6 +1090,17 @@ class MainWindow(QMainWindow):
         from ui.groups_dialog import GroupsDialog
         GroupsDialog(self).exec()
 
+    # --- discovery: search the product on Google (Phase 35) ---------------
+
+    def _search_google(self, product_id) -> None:
+        """Open a Google search for the product so the user can find it (in
+        stock / cheaper) on other sites — robust, instant, no scraping."""
+        product = repo.get_product(product_id)
+        if product is None:
+            return
+        query = product.name or product.url
+        QDesktopServices.openUrl(QUrl("https://www.google.com/search?q=" + quote_plus(query)))
+
     def _show_row_menu(self, pos) -> None:
         row = self.table.rowAt(pos.y())
         if row < 0:
@@ -1101,6 +1112,8 @@ class MainWindow(QMainWindow):
         current = {g.id for g in repo.groups_for_product(product_id)}
 
         menu = QMenu(self)
+        menu.addAction("Search on Google…", partial(self._search_google, product_id))
+        menu.addSeparator()
         add_menu = menu.addMenu("Add to group")
         for group in groups:
             if group.id in current:

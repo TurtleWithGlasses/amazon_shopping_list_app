@@ -307,24 +307,23 @@ draggable splitter sizes the table vs. graph. Membership is a reference (FK
 `on delete cascade`), so deleting/refreshing a product flows through
 automatically. Group-level alerts can layer on later via Phase 33.
 
+### Phase 35 — "Search on Google" (find it elsewhere)
+Per-product **"Search on Google…"** (right-click) opens a Google web search for
+the product name in the browser, so the user can find it **in stock / cheaper**
+on other sites. Chosen over scraping a comparison site (Akakçe/Cimri) or a paid
+search API: it's **instant** (no Selenium), **robust** (no anti-bot/ToS issues —
+we just open a URL), and broad (any site Google indexes, and it tends to rank
+in-stock retailer pages). Human-in-the-loop. *(An in-app, pre-matched seller
+list was prototyped against Akakçe but dropped: its per-seller store names are
+obfuscated / JS-rendered / lazy-loaded and too fragile to scrape reliably.)*
+
 ---
 
 ## Upcoming
 
-The remaining "buying tool" set — built to need **no paid APIs** (discovery and
-recommendations reuse the existing scraper). Suggested order: 35 → 36, with 37
-(trend) and 38 (cart) as self-contained additions.
-
-### Phase 35 — "Find it cheaper elsewhere" (comparison-site discovery)
-Suggest the same product on other sites — **free**, by leaning on a price-
-comparison site (Akakçe / Cimri) that already solved cross-site matching, rather
-than a paid search API.
-- Given a product, query its comparison-site page and scrape the **seller +
-  price list** (reuses the scraping pipeline; needs an adapter for the section).
-- Surface results as "also available on…"; matching is **best-effort** —
-  results are **suggestions the user confirms**, then drop into a Phase 34 group.
-- Optional precision signal: match on **GTIN/MPN/brand** from structured data
-  when present. No paid API; human-in-the-loop to avoid wrong-variant matches.
+The remaining "buying tool" set — built to need **no paid APIs** (recommendations
+reuse the existing scraper). Suggested order: 36, then the self-contained 37
+(trend), 38 (cart), 39 (theme-aware graphs), 40 (notifications center).
 
 ### Phase 36 — Complementary product suggestions ("you might also track…")
 "Tracking shaving blades? You might want shaving gel / after-shave too." Built
