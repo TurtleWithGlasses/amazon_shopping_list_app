@@ -317,44 +317,31 @@ in-stock retailer pages). Human-in-the-loop. *(An in-app, pre-matched seller
 list was prototyped against Akakçe but dropped: its per-seller store names are
 obfuscated / JS-rendered / lazy-loaded and too fragile to scrape reliably.)*
 
+### Phase 36 — Complementary product suggestions ("you might also track…")
+Right-click a product → **"You might also need"** lists complementary items for
+its category; clicking one opens a Google search (Phase 35). **Free &
+deterministic** — a curated category→complement map (`services/suggestions.py`)
+with Turkish-aware keyword detection (`İşlemci → işlemci`); no scraping (would be
+as fragile as the dropped Akakçe seller list), no ML, no API. Extensible by
+adding a row to the rule table. *(Optional Ollama upgrade and a persistent
+suggestions strip left as future enhancements.)*
+
+### Phase 37 — Price trend indicator (rising / falling / stable)
+A **Trend column** marks each product's tendency over a 7-day window: ▼ green
+(falling), ▲ red (rising), → gray (stable), blank (too few points), with a
+`% change` tooltip; distinct from Phase 32 (last-scan move). `services/trend.py`
+uses a least-squares slope (robust to a single blip); a `_trend_cache` is filled
+by one **batched** `recent_history` query at startup and after each refresh —
+never per-row on reload — and the column is **sortable** by % change. The cloud
+query is **paginated** (Supabase caps a response at 1000 rows, which a week of
+snapshots exceeds — otherwise most trends came back empty).
+
 ---
 
 ## Upcoming
 
-The remaining "buying tool" set — built to need **no paid APIs** (recommendations
-reuse the existing scraper). Suggested order: 36, then the self-contained 37
-(trend), 38 (cart), 39 (theme-aware graphs), 40 (notifications center).
-
-### Phase 36 — Complementary product suggestions ("you might also track…")
-"Tracking shaving blades? You might want shaving gel / after-shave too." Built
-**free**, no recommender-model data needed (avoids the cold-start problem):
-- **Primary — scrape the retailer's own widget:** parse "Birlikte Alınanlar /
-  İlgili Ürünler" on pages already being loaded — real co-purchase data, zero
-  cost, items already trackable.
-- **Fallback — curated category→complement rules:** a static JSON map
-  (`shaving → {gel, after-shave, brush}`) with keyword-based category detection;
-  suggested terms run through Phase 35 discovery to become real listings.
-- **Optional upgrade — local LLM via Ollama:** if the user runs Ollama
-  (`localhost:11434`, no API key, no cost), ask a small model (e.g.
-  `llama3.2:3b`) for complementary **Turkish** search terms; fall back to the
-  above when absent. Not bundled (would bloat the installer); cached per product.
-- A quiet, **dismissible** suggestions strip; everything human-confirmed; results
-  feed discovery/groups.
-
-### Phase 37 — Price trend indicator (rising / falling / stable)
-Mark each product by its **tendency over a window** (default 7 days) — distinct
-from Phase 32, which shows only the last scan's move. No ML; reads the existing
-`PriceHistory`.
-- Compute from history in the window: a least-squares **slope** (robust to a
-  single blip) or net % change start→end, classified with a **stability band** —
-  **falling** (green ▼ / 📉), **rising** (red ▲ / 📈), **stable** (→), or
-  **unknown** when there are too few points. Colors match Phase 32 (down green,
-  up red).
-- Show as a **Trend column / badge** with a tooltip giving the % change + window;
-  let the user **sort by trend** to spot what's dropping this week. Window could
-  reuse the existing timescale options (day / week / month).
-- **Perf:** batch the history fetch (one query) or cache the computed trend and
-  recompute after each refresh — never per-row on every reload. No new deps.
+Self-contained items, any order: **38** (cart), **39** (theme-aware graphs),
+**40** (notifications center).
 
 ### Phase 38 — Virtual shopping cart
 A cart the user builds from tracked products, showing the **live total cost**.

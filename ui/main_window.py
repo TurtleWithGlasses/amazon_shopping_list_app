@@ -1,6 +1,6 @@
 """Main application window: product table, add/refresh, edit/delete, graph, export."""
 import os
-from datetime import timezone
+from datetime import datetime, timedelta, timezone
 from functools import partial
 from urllib.parse import quote_plus, urlparse
 
@@ -36,6 +36,8 @@ from core.version import GITHUB_REPO, __version__
 from services import export as export_service
 from services.notifications import NotificationService
 from services.scrape_worker import ScrapeTask
+from services.suggestions import complement_terms
+from services.trend import price_trend
 from services.stock import OUT_OF_STOCK, classify_stock
 from services.telegram import TelegramNotifier
 from services.updater import DownloadTask, UpdateCheckTask
@@ -56,9 +58,17 @@ _DECREASE_COLOR = QColor("#2e9e44")  # green: price or stock went down
 _CHANGED_COLOR = QColor("#e8830c")   # orange: changed, direction indeterminate
 _PRICE_UP_COLOR = QColor("#cc3b3b")  # red: price rose (buyer's view; matches notifications)
 
-(COL_NUM, COL_MOVE, COL_LOGO, COL_IMAGE, COL_NAME,
- COL_PRICE, COL_STOCK, COL_CHECKED, COL_STATUS, COL_ACTIONS) = range(10)
-COLUMN_COUNT = 10
+(COL_NUM, COL_MOVE, COL_LOGO, COL_IMAGE, COL_NAME, COL_PRICE, COL_TREND,
+ COL_STOCK, COL_CHECKED, COL_STATUS, COL_ACTIONS) = range(11)
+COLUMN_COUNT = 11
+
+# Price-trend indicator (Phase 37): glyph, color, label by state name.
+_TREND_STYLES = {
+    "falling": ("▼", _DECREASE_COLOR, "Falling"),
+    "rising": ("▲", _PRICE_UP_COLOR, "Rising"),
+    "stable": ("→", QColor("#888888"), "Stable"),
+    "unknown": ("", None, ""),
+}
 _ROW_NUM_COLOR = QColor("#888888")  # muted index numbers, readable on light/dark
 
 # Per-row fetch status (glyph, color, tooltip default) keyed by state name.
@@ -102,6 +112,7 @@ class MainWindow(QMainWindow):
         self._row_refresh_buttons = {}  # product id -> per-row Refresh button
         self._row_for_product = {}     # product id -> table row index
         self._single_active = set()    # ids with a single-row refresh in flight
+        self._trend_cache = {}         # product id -> (state, pct) over the window
         self._really_quit = False
         self.logout_requested = False
         self._tray_available = False
@@ -127,6 +138,7 @@ class MainWindow(QMainWindow):
         self._build_central()
         self._build_tray()
         self._restore_layout()
+        self._recompute_trends()  # fill the trend cache before the first render
         self.reload()
         self._start_timers()
 
@@ -203,8 +215,8 @@ class MainWindow(QMainWindow):
         # Table
         self.table = QTableWidget(0, COLUMN_COUNT)
         self.table.setHorizontalHeaderLabels(
-            ["#", "", "", "", "Product", "Price", "Stock", "Last checked",
-             "Status", "Actions"]
+            ["#", "", "", "", "Product", "Price", "Trend", "Stock",
+             "Last checked", "Status", "Actions"]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.verticalHeader().setDefaultSectionSize(ROW_HEIGHT)
@@ -219,7 +231,7 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         for col, width in (
             (COL_NUM, 38), (COL_MOVE, 84), (COL_LOGO, 84), (COL_IMAGE, 74),
-            (COL_NAME, 320), (COL_PRICE, 110), (COL_STOCK, 150),
+            (COL_NAME, 320), (COL_PRICE, 110), (COL_TREND, 64), (COL_STOCK, 150),
             (COL_CHECKED, 140), (COL_STATUS, 64), (COL_ACTIONS, 340),
         ):
             self.table.setColumnWidth(col, width)
@@ -247,6 +259,16 @@ class MainWindow(QMainWindow):
 
     # --- data → table ------------------------------------------------------
 
+    def _recompute_trends(self, days: int = 7) -> None:
+        """Refresh the price-trend cache in one batched history query, so the
+        Trend column never costs a per-row query on reload (Phase 37)."""
+        since = datetime.now(timezone.utc) - timedelta(days=days)
+        try:
+            history = repo.recent_history(since)
+        except Exception:
+            return  # leave the previous cache; trends just won't update this time
+        self._trend_cache = {pid: price_trend(points) for pid, points in history.items()}
+
     def reload(self) -> None:
         # Preserve the scroll position: rebuilding the table resets the
         # scrollbar to the top, which yanks the view up after Add/refresh/move.
@@ -266,13 +288,15 @@ class MainWindow(QMainWindow):
 
     # --- sorting -----------------------------------------------------------
 
-    _SORTABLE_COLUMNS = (COL_NAME, COL_PRICE, COL_STOCK, COL_CHECKED)
+    _SORTABLE_COLUMNS = (COL_NAME, COL_PRICE, COL_TREND, COL_STOCK, COL_CHECKED)
 
     def _sort_value(self, product, col):
         if col == COL_NAME:
             return (product.name or product.url or "").casefold()
         if col == COL_PRICE:
             return product.last_price
+        if col == COL_TREND:
+            return self._trend_cache.get(product.id, ("unknown", None))[1]  # % change
         if col == COL_STOCK:
             return (product.last_stock or "").casefold() or None
         if col == COL_CHECKED:
@@ -342,6 +366,18 @@ class MainWindow(QMainWindow):
         if tips:
             price_item.setToolTip(" · ".join(tips))
         self.table.setItem(row, COL_PRICE, price_item)
+
+        # Price trend over the window (Phase 37), from the batched cache.
+        state, pct = self._trend_cache.get(product.id, ("unknown", None))
+        glyph, color, label = _TREND_STYLES[state]
+        trend_item = QTableWidgetItem(glyph)
+        trend_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if color is not None:
+            trend_item.setForeground(color)
+        if pct is not None:
+            trend_item.setData(Qt.ItemDataRole.UserRole, pct)  # for sorting
+            trend_item.setToolTip(f"{label} {pct:+.1f}% over 7 days")
+        self.table.setItem(row, COL_TREND, trend_item)
 
         stock_item = QTableWidgetItem(product.last_stock or "Unknown")
         stock_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -616,6 +652,7 @@ class MainWindow(QMainWindow):
             message = data.error or "Scrape failed"
         # Update only this row in place (no full reload) so the scroll position
         # and focus stay put, then set the indicator.
+        self._recompute_trends()  # this product gained a history point
         self._update_row(product_id)
         if ok:
             self._set_row_status(product_id, "ok")
@@ -808,6 +845,7 @@ class MainWindow(QMainWindow):
 
     def _finalize_refresh(self) -> None:
         self.refresh_button.setEnabled(True)
+        self._recompute_trends()  # new history points may change the trends
         self.reload()
 
         total = len(self._refresh_events)
@@ -923,7 +961,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.showMaximized)
         # _v2: layout defaults changed (taller rows, wider columns), so old saved
         # column widths are intentionally ignored.
-        header_state = self._settings.value("header_state_v7")
+        header_state = self._settings.value("header_state_v8")
         if header_state is not None:
             self.table.horizontalHeader().restoreState(header_state)
         close_to_tray = self._settings.value("close_to_tray", True, type=bool)
@@ -958,7 +996,7 @@ class MainWindow(QMainWindow):
     def _save_layout(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("window_maximized", self.isMaximized() or self.isFullScreen())
-        self._settings.setValue("header_state_v7", self.table.horizontalHeader().saveState())
+        self._settings.setValue("header_state_v8", self.table.horizontalHeader().saveState())
         self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
         self._settings.setValue("sort_column", -1 if self._sort_column is None else self._sort_column)
         self._settings.setValue("sort_order", self._sort_order.value)
@@ -1092,14 +1130,16 @@ class MainWindow(QMainWindow):
 
     # --- discovery: search the product on Google (Phase 35) ---------------
 
+    def _open_google(self, query: str) -> None:
+        QDesktopServices.openUrl(QUrl("https://www.google.com/search?q=" + quote_plus(query)))
+
     def _search_google(self, product_id) -> None:
         """Open a Google search for the product so the user can find it (in
         stock / cheaper) on other sites — robust, instant, no scraping."""
         product = repo.get_product(product_id)
         if product is None:
             return
-        query = product.name or product.url
-        QDesktopServices.openUrl(QUrl("https://www.google.com/search?q=" + quote_plus(query)))
+        self._open_google(product.name or product.url)
 
     def _show_row_menu(self, pos) -> None:
         row = self.table.rowAt(pos.y())
@@ -1113,6 +1153,13 @@ class MainWindow(QMainWindow):
 
         menu = QMenu(self)
         menu.addAction("Search on Google…", partial(self._search_google, product_id))
+        # Complementary suggestions for this product's category (Phase 36).
+        name_item = self.table.item(row, COL_NAME)
+        suggestions = complement_terms(name_item.text() if name_item else "")
+        if suggestions:
+            sug_menu = menu.addMenu("You might also need")
+            for term in suggestions:
+                sug_menu.addAction(f"Search: {term}", partial(self._open_google, term))
         menu.addSeparator()
         add_menu = menu.addMenu("Add to group")
         for group in groups:

@@ -188,6 +188,20 @@ def get_price_history(
         return list(session.scalars(stmt))
 
 
+def recent_history(since: datetime) -> dict:
+    """All price points since `since`, grouped by product id (one query).
+    Used to compute price trends without a per-product query (Phase 37)."""
+    with session_scope() as session:
+        stmt = (
+            select(PriceHistory.product_id, PriceHistory.captured_at, PriceHistory.price)
+            .where(PriceHistory.captured_at >= since)
+        )
+        result: dict = {}
+        for product_id, captured_at, price in session.execute(stmt):
+            result.setdefault(product_id, []).append((captured_at, price))
+        return result
+
+
 # --- groups (Phase 34) ----------------------------------------------------
 
 def create_group(name: str, user_id: Optional[int] = None) -> Group:

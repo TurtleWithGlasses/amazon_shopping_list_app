@@ -252,6 +252,33 @@ def get_price_history(product_id, since=None) -> List[CloudHistory]:
     return [_to_history(r) for r in rows]
 
 
+@_resilient
+def recent_history(since) -> dict:
+    """All price points since `since`, grouped by product id (RLS scopes to the
+    user). Used to compute price trends (Phase 37). Paginated, because Supabase
+    caps a single response at 1000 rows — a week of snapshots easily exceeds it,
+    which would otherwise leave most products with too few points."""
+    client = get_client()
+    result: dict = {}
+    size, start = 1000, 0
+    while True:
+        rows = (
+            client.table("price_history").select("product_id,price,captured_at")
+            .gte("captured_at", since.isoformat())
+            .order("captured_at")
+            .range(start, start + size - 1)
+            .execute().data
+        )
+        for r in rows:
+            result.setdefault(r["product_id"], []).append(
+                (_parse_dt(r.get("captured_at")), r.get("price"))
+            )
+        if len(rows) < size:
+            break
+        start += size
+    return result
+
+
 # --- groups (Phase 34) ----------------------------------------------------
 
 @dataclass
