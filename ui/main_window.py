@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
         self._refresh_report = False  # open the changes report window on finalize
         self._refresh_events = []  # detailed change records (notification + report)
         self._target_hits = []     # products whose price hit the target this batch
+        self._cart_dialog = None   # open cart, so a refresh can update it live
 
         self._build_menu()
         self._build_central()
@@ -178,6 +179,10 @@ class MainWindow(QMainWindow):
         # "Manage groups…" below them — one click to open any group.
         self._groups_menu = self.menuBar().addMenu("&Groups")
         self._groups_menu.aboutToShow.connect(self._populate_groups_menu)
+
+        # Shopping cart (Phase 38): open the cart or clear it; label shows count.
+        self._cart_menu = self.menuBar().addMenu("&Cart")
+        self._cart_menu.aboutToShow.connect(self._populate_cart_menu)
 
     def _build_central(self) -> None:
         central = QWidget()
@@ -654,6 +659,7 @@ class MainWindow(QMainWindow):
         # and focus stay put, then set the indicator.
         self._recompute_trends()  # this product gained a history point
         self._update_row(product_id)
+        self._refresh_cart_if_open()  # reflect the new price in an open cart
         if ok:
             self._set_row_status(product_id, "ok")
             self.statusBar().showMessage("Refresh complete")
@@ -847,6 +853,7 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(True)
         self._recompute_trends()  # new history points may change the trends
         self.reload()
+        self._refresh_cart_if_open()  # reflect new prices in an open cart
 
         total = len(self._refresh_events)
         if self._refresh_notify and self._refresh_events:
@@ -1142,6 +1149,48 @@ class MainWindow(QMainWindow):
         from ui.groups_dialog import GroupsDialog
         GroupsDialog(self).exec()
 
+    # --- shopping cart (Phase 38) ------------------------------------------
+
+    def _populate_cart_menu(self) -> None:
+        self._cart_menu.clear()
+        count = repo.cart_count()
+        self._cart_menu.addAction(f"Open cart  ({count})", self._open_cart)
+        self._cart_menu.addSeparator()
+        clear = self._cart_menu.addAction("Clear cart", self._clear_cart)
+        clear.setEnabled(count > 0)
+
+    def _open_cart(self) -> None:
+        from ui.cart_dialog import CartDialog
+        self._cart_dialog = CartDialog(self)
+        try:
+            self._cart_dialog.exec()
+        finally:
+            self._cart_dialog = None
+
+    def _refresh_cart_if_open(self) -> None:
+        """If the cart is open, re-pull prices so a just-finished refresh shows
+        immediately (quantities are persisted, so they're preserved)."""
+        dialog = self._cart_dialog
+        if dialog is not None and dialog.isVisible():
+            dialog.reload_prices()
+
+    def _clear_cart(self) -> None:
+        confirm = QMessageBox.question(
+            self, "Clear cart",
+            "Remove all items from the cart? The products themselves stay tracked.",
+        )
+        if confirm == QMessageBox.StandardButton.Yes:
+            repo.clear_cart()
+            self.statusBar().showMessage("Cart cleared")
+
+    def _add_to_cart(self, product_id) -> None:
+        added = repo.add_to_cart(product_id)
+        self.statusBar().showMessage("Added to cart" if added else "Already in cart")
+
+    def _remove_from_cart(self, product_id) -> None:
+        repo.remove_from_cart(product_id)
+        self.statusBar().showMessage("Removed from cart")
+
     # --- discovery: search the product on Google (Phase 35) ---------------
 
     def _open_google(self, query: str) -> None:
@@ -1174,6 +1223,11 @@ class MainWindow(QMainWindow):
             sug_menu = menu.addMenu("You might also need")
             for term in suggestions:
                 sug_menu.addAction(f"Search: {term}", partial(self._open_google, term))
+        menu.addSeparator()
+        if product_id in repo.cart_product_ids():
+            menu.addAction("Remove from cart", partial(self._remove_from_cart, product_id))
+        else:
+            menu.addAction("Add to cart", partial(self._add_to_cart, product_id))
         menu.addSeparator()
         add_menu = menu.addMenu("Add to group")
         for group in groups:

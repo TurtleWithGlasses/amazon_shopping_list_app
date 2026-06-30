@@ -106,3 +106,18 @@ class GroupMember(Base):
     product_id: Mapped[int] = mapped_column(
         ForeignKey("products.id", ondelete="CASCADE"), index=True, nullable=False
     )
+
+
+class CartItem(Base):
+    """A tracked product in the user's shopping cart, with a quantity (Phase 38).
+    Like group membership it references a product, so price changes flow through
+    automatically; a product appears at most once (the quantity carries count)."""
+    __tablename__ = "cart_items"
+    __table_args__ = (UniqueConstraint("product_id", name="uq_cart_product"),)
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    user_id: Mapped[Optional[int]] = mapped_column(Integer, nullable=True, index=True)
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    quantity: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

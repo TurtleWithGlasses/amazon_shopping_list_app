@@ -367,3 +367,71 @@ def groups_for_product(product_id) -> List[CloudGroup]:
         return []
     rows = client.table("groups").select("*").in_("id", ids).order("created_at").execute().data
     return [CloudGroup(id=r["id"], name=r["name"]) for r in rows]
+
+
+# --- shopping cart (Phase 38) ---------------------------------------------
+
+@_resilient
+def add_to_cart(product_id, quantity=1, user_id=None) -> bool:
+    client = get_client()
+    existing = client.table("cart_items").select("id").eq("product_id", product_id).execute().data
+    if existing:
+        return False
+    client.table("cart_items").insert(
+        {"user_id": user_id or current_user_id(),
+         "product_id": product_id, "quantity": max(1, quantity)}
+    ).execute()
+    return True
+
+
+@_resilient
+def set_cart_quantity(product_id, quantity) -> bool:
+    client = get_client()
+    if quantity <= 0:
+        rows = client.table("cart_items").delete().eq("product_id", product_id).execute().data
+        return bool(rows)
+    rows = client.table("cart_items").update(
+        {"quantity": quantity}
+    ).eq("product_id", product_id).execute().data
+    return bool(rows)
+
+
+@_resilient
+def remove_from_cart(product_id) -> bool:
+    rows = get_client().table("cart_items").delete().eq("product_id", product_id).execute().data
+    return bool(rows)
+
+
+@_resilient
+def clear_cart() -> None:
+    client = get_client()
+    ids = [r["product_id"] for r in client.table("cart_items").select("product_id").execute().data]
+    if ids:
+        client.table("cart_items").delete().in_("product_id", ids).execute()
+
+
+@_resilient
+def cart_products() -> List[CloudProduct]:
+    client = get_client()
+    rows = client.table("cart_items").select("product_id,quantity").execute().data
+    qty = {r["product_id"]: r["quantity"] for r in rows}
+    if not qty:
+        return []
+    prows = client.table("products").select("*").in_("id", list(qty)).order("position").execute().data
+    products = []
+    for r in prows:
+        product = _to_product(r)
+        product.quantity = qty.get(r["id"], 1)
+        products.append(product)
+    return products
+
+
+@_resilient
+def cart_product_ids() -> set:
+    rows = get_client().table("cart_items").select("product_id").execute().data
+    return {r["product_id"] for r in rows}
+
+
+@_resilient
+def cart_count() -> int:
+    return get_client().table("cart_items").select("id", count="exact").execute().count or 0

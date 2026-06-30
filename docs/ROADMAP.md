@@ -351,36 +351,28 @@ legend/hover use theme-legible colors. Applied in `ui/graph_dialog.py` and
 `ui/group_view_dialog.py`; re-applied each time a graph opens, so switching the
 theme and reopening picks up the new look. UI-only; no schema; no new deps.
 
+### Phase 38 — Virtual shopping cart
+A single cart the user builds from tracked products, with a **live total cost**.
+New `cart_items` table (both backends; RLS on Supabase) referencing a product +
+a quantity (a product appears at most once). Right-click a product → **Add to /
+Remove from cart**; a **Cart** menu opens the cart (label shows the item count)
+or clears it. The cart view ([ui/cart_dialog.py](../ui/cart_dialog.py)) lists
+each item with logo, clickable name link, site, unit price, an inline **Qty**
+spinbox, and a **line total**, with a pinned **grand total**. Because items
+reference tracked products, prices flow through automatically: editing a quantity
+updates the line + grand total instantly (and persists), and a refresh while the
+cart is open **reloads it live** (`reload_prices()` hooked into
+`_finalize_refresh` / `_on_one_refreshed`). The total is summed **per currency**
+and shows a **▲/▼ delta** from the most recent refresh; products scraped without
+a currency label are folded into the cart's single known currency so there's one
+combined total (only genuinely different currencies split). *(Single cart for
+now; cart-level target alerts via Phase 33 left as a future enhancement.)*
+
 ---
 
 ## Upcoming
 
-Self-contained items, any order: **38** (cart), **40** (notifications center).
-
-### Phase 38 — Virtual shopping cart
-A cart the user builds from tracked products, showing the **live total cost**.
-- Add/remove tracked products to/from a cart (per-product quantity optional);
-  the cart lists each item with its current price and a running **total**.
-- **Prices flow through live:** since cart items reference tracked products, a
-  price change from any refresh updates the cart total automatically (reuse the
-  same `last_price`); show the per-item ▲/▼ and a total delta.
-- A cart panel/tab (or dialog) with the total pinned; optionally a cart-level
-  target alert ("notify when the cart total drops below ₺X") via Phase 33.
-- Schema: a `cart_items` table (product_id, quantity) — or reuse Phase 34 groups
-  with a "cart" flag, since a cart is essentially a group with a summed total.
-
-### Phase 39 — Theme-aware graphs
-The price-history graph (and the group comparison graph) hardcode a **white
-background** and fixed axis/grid/line colors, so they clash on the dark / Stitch
-/ Material themes (see screenshot — white chart in a dark window).
-- Drive pyqtgraph styling from the active theme: background = surface (`base`),
-  axis text/labels = `text`/`subtext`, grid = `border`, and pick line/hover
-  colors that read on that background (the group view already assigns per-line
-  colors — make them theme-appropriate).
-- Add the needed values via the existing `ui/theme.py` tokens (reuse
-  `link_color()`-style accessors); apply in `ui/graph_dialog.py` and
-  `ui/group_view_dialog.py`. Re-style when the theme changes (rebuild on open is
-  enough). UI-only; no new deps.
+Self-contained: **40** (notifications center).
 
 ### Phase 40 — In-app notifications center
 A **notifications button** (bell) in the toolbar with an **unread badge**, so the
@@ -411,6 +403,10 @@ sites, so revisit only if browser-fallback sites come to dominate a refresh.
   so scrapers and core logic can change safely as the app grows.
 - **Dedicated adapters** for Teknosa / Vatan / Media Markt / Trendyol (currently
   scraped via the generic adapter, which may misread price/stock).
+- **Amazon currency sometimes blank**: some amazon.com.tr listings are stored
+  with an empty `currency`, so prices show without a "TL" suffix. The cart works
+  around it (folds blank into the single known currency), but the Amazon adapter
+  should capture the currency reliably so the value is correct at the source.
 - **Code signing**: unsigned exe/installer triggers SmartScreen. Needs an
   Authenticode certificate (see `BUILD.md`).
 - The `.exe` must be rebuilt (`build.bat`) after dependency or asset changes.

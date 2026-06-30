@@ -10,7 +10,7 @@ from urllib.parse import urlparse
 from sqlalchemy import func, select
 
 from .db import session_scope
-from .models import Group, GroupMember, PriceHistory, Product, utcnow
+from .models import CartItem, Group, GroupMember, PriceHistory, Product, utcnow
 
 
 def _retailer_from_url(url: str) -> str:
@@ -292,3 +292,70 @@ def groups_for_product(product_id: int) -> List[Group]:
             .order_by(Group.created_at)
         )
         return list(session.scalars(stmt))
+
+
+# --- shopping cart (Phase 38) ---------------------------------------------
+
+def add_to_cart(product_id: int, quantity: int = 1, user_id: Optional[int] = None) -> bool:
+    """Add a product to the cart; returns False if it was already in the cart."""
+    with session_scope() as session:
+        exists = session.scalar(select(CartItem).where(CartItem.product_id == product_id))
+        if exists is not None:
+            return False
+        session.add(CartItem(product_id=product_id, quantity=max(1, quantity), user_id=user_id))
+        return True
+
+
+def set_cart_quantity(product_id: int, quantity: int) -> bool:
+    """Set a cart item's quantity; quantity <= 0 removes it. False if not in cart."""
+    with session_scope() as session:
+        item = session.scalar(select(CartItem).where(CartItem.product_id == product_id))
+        if item is None:
+            return False
+        if quantity <= 0:
+            session.delete(item)
+        else:
+            item.quantity = quantity
+        return True
+
+
+def remove_from_cart(product_id: int) -> bool:
+    with session_scope() as session:
+        item = session.scalar(select(CartItem).where(CartItem.product_id == product_id))
+        if item is None:
+            return False
+        session.delete(item)
+        return True
+
+
+def clear_cart() -> None:
+    with session_scope() as session:
+        for item in session.scalars(select(CartItem)):
+            session.delete(item)
+
+
+def cart_products() -> List[Product]:
+    """Products in the cart, each annotated with `.quantity`, in display order."""
+    with session_scope() as session:
+        rows = session.execute(
+            select(Product, CartItem.quantity)
+            .join(CartItem, CartItem.product_id == Product.id)
+            .order_by(Product.position, Product.created_at)
+        ).all()
+        products = []
+        for product, quantity in rows:
+            product.quantity = quantity
+            products.append(product)
+        return products
+
+
+def cart_product_ids() -> set:
+    """Set of product ids currently in the cart (for menu state)."""
+    with session_scope() as session:
+        return set(session.scalars(select(CartItem.product_id)))
+
+
+def cart_count() -> int:
+    """Number of distinct products in the cart."""
+    with session_scope() as session:
+        return session.scalar(select(func.count()).select_from(CartItem)) or 0

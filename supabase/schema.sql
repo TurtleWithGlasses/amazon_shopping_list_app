@@ -57,11 +57,24 @@ create table if not exists public.group_members (
 );
 create index if not exists group_members_group_idx on public.group_members (group_id);
 
+-- Shopping cart items (Phase 38). A product appears at most once per user; the
+-- quantity carries the count. References a tracked product, so price changes
+-- flow through to the cart total automatically.
+create table if not exists public.cart_items (
+    id          bigint generated always as identity primary key,
+    user_id     uuid not null references auth.users (id) on delete cascade,
+    product_id  bigint not null references public.products (id) on delete cascade,
+    quantity    integer not null default 1,
+    unique (user_id, product_id)
+);
+create index if not exists cart_items_user_idx on public.cart_items (user_id);
+
 -- ── Row-level security ──────────────────────────────────────────────────────
 alter table public.products enable row level security;
 alter table public.price_history enable row level security;
 alter table public.groups enable row level security;
 alter table public.group_members enable row level security;
+alter table public.cart_items enable row level security;
 
 -- Users can only touch their own groups.
 drop policy if exists "own groups" on public.groups;
@@ -82,6 +95,13 @@ create policy "own group_members" on public.group_members
         select 1 from public.groups g
         where g.id = group_members.group_id and g.user_id = auth.uid()
     ));
+
+-- Users can only touch their own cart items.
+drop policy if exists "own cart_items" on public.cart_items;
+create policy "own cart_items" on public.cart_items
+    for all
+    using (auth.uid() = user_id)
+    with check (auth.uid() = user_id);
 
 -- Users can only touch their own products.
 drop policy if exists "own products" on public.products;
