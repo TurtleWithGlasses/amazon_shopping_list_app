@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import datastore as repo
-from core.cloud import auth
+from core.cloud import auth, session_store
 from core.scraping.registry import get_adapter
 from core.version import GITHUB_REPO, __version__
 from services import export as export_service
@@ -878,6 +878,7 @@ class MainWindow(QMainWindow):
 
     def _take_snapshot(self) -> None:
         """Hourly timer: log current price/stock to history without re-scraping."""
+        self._persist_session()  # keep the saved token fresh as it rotates
         products = repo.list_products()
         for product in products:
             repo.record_price_snapshot(
@@ -885,6 +886,18 @@ class MainWindow(QMainWindow):
             )
         if products:
             self.statusBar().showMessage(f"Logged hourly snapshot for {len(products)} product(s)")
+
+    def _persist_session(self) -> None:
+        """Re-save the current (possibly rotated) Supabase refresh token, so a
+        long-running session doesn't leave a stale token that forces a re-login
+        on the next launch. No-op if "remember me" isn't active."""
+        try:
+            if session_store.has_saved_session():
+                token = auth.current_refresh_token()
+                if token:
+                    session_store.save_session(token, auth.current_email() or "")
+        except Exception:
+            pass
 
     def _start_task(self, url: str, key, on_finished) -> None:
         task = ScrapeTask(url, key=key)
@@ -1020,6 +1033,7 @@ class MainWindow(QMainWindow):
     def _quit(self) -> None:
         self._really_quit = True
         self._save_layout()
+        self._persist_session()  # persist the latest token so next launch restores
         if self.tray_icon is not None:
             self.tray_icon.hide()
         QApplication.instance().quit()

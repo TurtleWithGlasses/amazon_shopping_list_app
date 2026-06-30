@@ -40,15 +40,13 @@ def load_email():
 
 
 def clear_session() -> None:
+    """Forget the saved login token (require re-login). The email is kept so the
+    login form can still prefill it — it's not sensitive and saves retyping."""
     try:
         kr = _keyring()
+        kr.delete_password(_SERVICE, _TOKEN_KEY)
     except Exception:
-        return
-    for key in (_TOKEN_KEY, _EMAIL_KEY):
-        try:
-            kr.delete_password(_SERVICE, key)
-        except Exception:
-            pass
+        pass
 
 
 def has_saved_session() -> bool:
