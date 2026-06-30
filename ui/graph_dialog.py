@@ -7,9 +7,7 @@ from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QVBoxLayo
 
 from core import datastore as repo
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS, since_for
-
-_LINE = pg.mkPen("#1f77b4", width=2)
-_BRUSH = "#1f77b4"
+from ui.graph_style import HOVER_COLOR, style_plot
 
 
 class GraphDialog(QDialog):
@@ -32,9 +30,9 @@ class GraphDialog(QDialog):
 
         axis = pg.DateAxisItem(orientation="bottom")
         self.plot = pg.PlotWidget(axisItems={"bottom": axis})
-        self.plot.setBackground("w")
-        self.plot.setLabel("left", "Price", units=product.currency or "")
-        self.plot.showGrid(x=True, y=True, alpha=0.3)
+        self._theme = style_plot(self.plot)
+        self.plot.setLabel("left", "Price", units=product.currency or "",
+                           color=self._theme["subtext"])
         layout.addWidget(self.plot)
 
         self.empty_label = QLabel("No price history for this timescale yet.")
@@ -59,8 +57,9 @@ class GraphDialog(QDialog):
     def _add_hover_points(self, xs, ys, tips) -> None:
         scatter = pg.ScatterPlotItem(
             x=xs, y=ys, size=9,
-            brush=pg.mkBrush(_BRUSH), pen=pg.mkPen("w", width=1),
-            hoverable=True, hoverSize=13, hoverBrush=pg.mkBrush("#e8830c"),
+            brush=pg.mkBrush(self._theme["accent"]),
+            pen=pg.mkPen(self._theme["base"], width=1),
+            hoverable=True, hoverSize=13, hoverBrush=pg.mkBrush(HOVER_COLOR),
             data=tips, tip=lambda x, y, data: data,
         )
         self.plot.addItem(scatter)
@@ -78,7 +77,7 @@ class GraphDialog(QDialog):
         xs = [t for t, _ in points]
         ys = [p for _, p in points]
         # Continuous line through every reading (keeps flat runs and steps exact).
-        self.plot.plot(xs, ys, pen=_LINE)
+        self.plot.plot(xs, ys, pen=pg.mkPen(self._theme["accent"], width=2))
         # Dots at both ends of each segment: the first/last reading, the point
         # where the price changes (arrival), and the last point before a change
         # (departure) — so each line's two endpoints are marked, without

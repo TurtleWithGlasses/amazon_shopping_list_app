@@ -101,11 +101,15 @@ THEME_CHOICES = [
 DEFAULT_THEME = "stitch"
 
 
+def active_theme() -> dict:
+    """The color map for the currently selected theme (falls back to default)."""
+    mode = QSettings().value("theme", DEFAULT_THEME) or DEFAULT_THEME
+    return THEMES.get(mode, THEMES[DEFAULT_THEME])
+
+
 def link_color() -> QColor:
     """Product-name link color for the active theme (harmonizes per theme)."""
-    mode = QSettings().value("theme", DEFAULT_THEME) or DEFAULT_THEME
-    theme = THEMES.get(mode, THEMES[DEFAULT_THEME])
-    return QColor(theme["link"])
+    return QColor(active_theme()["link"])
 
 
 def _palette(t: dict) -> QPalette:

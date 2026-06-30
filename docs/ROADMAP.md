@@ -338,10 +338,24 @@ snapshots exceeds — otherwise most trends came back empty).
 
 ---
 
+### Phase 39 — Theme-aware graphs
+The price-history graph and the group comparison graph hardcoded a **white
+background** and fixed axis/grid/line colors, so they clashed on the dark /
+Stitch / Material themes (a white chart in a dark window). They now pull their
+styling from the active theme via a shared helper
+([ui/graph_style.py](../ui/graph_style.py) `style_plot()` + a new
+`theme.active_theme()` accessor): background = surface (`base`), tick labels =
+`subtext`, axis/grid = `border`, the single-product line + hover dots = the
+theme `accent` (dot halo = `base`), and the group view's per-line palette + the
+legend/hover use theme-legible colors. Applied in `ui/graph_dialog.py` and
+`ui/group_view_dialog.py`; re-applied each time a graph opens, so switching the
+theme and reopening picks up the new look. UI-only; no schema; no new deps.
+
+---
+
 ## Upcoming
 
-Self-contained items, any order: **38** (cart), **39** (theme-aware graphs),
-**40** (notifications center).
+Self-contained items, any order: **38** (cart), **40** (notifications center).
 
 ### Phase 38 — Virtual shopping cart
 A cart the user builds from tracked products, showing the **live total cost**.

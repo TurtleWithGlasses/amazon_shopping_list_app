@@ -17,11 +17,10 @@ from PySide6.QtWidgets import (
 
 from core import datastore as repo
 from ui.formatting import format_price
+from ui.graph_style import LINE_COLORS, style_plot
 from ui.logos import _domain_key, logo_pixmap
 from ui.theme import link_color
 
-_LINE_COLORS = ["#1f77b4", "#d62728", "#2ca02c", "#9467bd",
-                "#ff7f0e", "#17becf", "#8c564b", "#e377c2"]
 _CHEAPEST = QColor("#2e9e44")  # green: the lowest-priced member
 
 # columns
@@ -45,7 +44,7 @@ class GroupViewDialog(QDialog):
         self.members = members
         # One color per member (in this sorted order) — shared by the row swatch
         # and the graph line so they're easy to match.
-        self._colors = {m.id: _LINE_COLORS[i % len(_LINE_COLORS)]
+        self._colors = {m.id: LINE_COLORS[i % len(LINE_COLORS)]
                         for i, m in enumerate(members)}
         priced = [m for m in members if m.last_price is not None]
         self._cheapest_id = priced[0].id if priced else None
@@ -147,10 +146,9 @@ class GroupViewDialog(QDialog):
     def _build_graph(self):
         axis = pg.DateAxisItem(orientation="bottom")
         plot = pg.PlotWidget(axisItems={"bottom": axis})
-        plot.setBackground("w")
-        plot.setLabel("left", "Price")
-        plot.showGrid(x=True, y=True, alpha=0.3)
-        plot.addLegend(offset=(10, 10))
+        t = style_plot(plot)
+        plot.setLabel("left", "Price", color=t["subtext"])
+        plot.addLegend(offset=(10, 10), labelTextColor=t["text"])
 
         plotted = False
         for product in self.members:
@@ -171,8 +169,8 @@ class GroupViewDialog(QDialog):
                     for t, p in points]
             scatter = pg.ScatterPlotItem(
                 x=xs, y=ys, size=6,
-                brush=pg.mkBrush(color), pen=pg.mkPen("w", width=0.5),
-                hoverable=True, hoverSize=12, hoverPen=pg.mkPen("k", width=1),
+                brush=pg.mkBrush(color), pen=pg.mkPen(t["base"], width=0.5),
+                hoverable=True, hoverSize=12, hoverPen=pg.mkPen(t["text"], width=1),
                 data=tips, tip=lambda x, y, data: data,
             )
             plot.addItem(scatter)
