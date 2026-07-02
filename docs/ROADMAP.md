@@ -368,25 +368,27 @@ a currency label are folded into the cart's single known currency so there's one
 combined total (only genuinely different currencies split). *(Single cart for
 now; cart-level target alerts via Phase 33 left as a future enhancement.)*
 
+### Phase 40 — In-app notifications center
+A **🔔 bell button** in the toolbar with an **unread badge** (e.g. `🔔 3`), so the
+user reviews recent changes inside the app — not only via Telegram/tray. After
+every refresh (Refresh All, auto-refresh, single-row, and the startup "while you
+were away" scan) each price move, back-in-stock, stock change, and 🎯 target hit
+is appended to a history log via `_log_notifications`, reusing the existing
+change pipeline (`_make_event` extracted so single-row refreshes are captured
+too). Clicking the bell opens a **When · Product · Change** window
+([ui/notification_center.py](../ui/notification_center.py)), newest first, with
+**Clear all**; opening marks everything read and clears the badge. History is
+**persisted** as JSON next to the DB ([services/notification_log.py](../services/notification_log.py),
+`core.paths.notifications_path()`), capped at 200 and degrading gracefully on a
+missing/corrupt file, so it survives restarts (unread state included). *(Per-row
+deep-link to the product graph left as a future enhancement.)*
+
 ---
 
 ## Upcoming
 
-Self-contained: **40** (notifications center).
-
-### Phase 40 — In-app notifications center
-A **notifications button** (bell) in the toolbar with an **unread badge**, so the
-user sees recent changes in the app — not only via Telegram/tray.
-- After each refresh, append the detected changes to an in-app **notifications
-  history** (same content as the Telegram message: per product `site · name`,
-  `prev → new` price with ▲/▼, stock change, 🎯 target reached).
-- Clicking the bell opens a **notifications window** listing recent changes,
-  newest first; the unread badge clears on open. Each entry could deep-link to
-  the product / open its graph.
-- Reuses the existing change-collection pipeline (`_refresh_events` /
-  `_changes_message`) and the `StartupChangesDialog` table pattern.
-- Persistence: in-memory per session for the MVP; optionally persist (a small
-  log table / JSON) so history survives restarts. No new deps.
+No numbered phases queued — the roadmap's planned set (through Phase 40) is
+shipped. Candidate next work lives under **Known follow-ups / tech debt** below.
 
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome
 alive across a batch; low value now that the fast path skips Chrome for most

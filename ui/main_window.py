@@ -31,9 +31,11 @@ from PySide6.QtWidgets import (
 
 from core import datastore as repo
 from core.cloud import auth, session_store
+from core.paths import notifications_path
 from core.scraping.registry import get_adapter
 from core.version import GITHUB_REPO, __version__
 from services import export as export_service
+from services.notification_log import NotificationLog
 from services.notifications import NotificationService
 from services.scrape_worker import ScrapeTask
 from services.suggestions import complement_terms
@@ -134,6 +136,7 @@ class MainWindow(QMainWindow):
         self._refresh_events = []  # detailed change records (notification + report)
         self._target_hits = []     # products whose price hit the target this batch
         self._cart_dialog = None   # open cart, so a refresh can update it live
+        self._notif_log = NotificationLog(notifications_path())  # in-app bell history
 
         self._build_menu()
         self._build_central()
@@ -141,6 +144,7 @@ class MainWindow(QMainWindow):
         self._restore_layout()
         self._recompute_trends()  # fill the trend cache before the first render
         self.reload()
+        self._update_bell()  # reflect any unread notifications persisted last session
         self._start_timers()
 
     # --- construction ------------------------------------------------------
@@ -210,11 +214,16 @@ class MainWindow(QMainWindow):
             self.interval_combo.addItem(label, ms)
         self.interval_combo.setToolTip("How often to automatically re-check all products.")
         self.interval_combo.currentIndexChanged.connect(self._on_interval_changed)
+        # Bell: opens the in-app notifications center; text carries an unread badge.
+        self.bell_button = QPushButton("🔔")
+        self.bell_button.setToolTip("Notifications — recent price / stock changes")
+        self.bell_button.clicked.connect(self._open_notifications)
         add_bar.addWidget(self.url_input, 1)
         add_bar.addWidget(self.add_button)
         add_bar.addWidget(self.refresh_button)
         add_bar.addWidget(QLabel("Auto-refresh:"))
         add_bar.addWidget(self.interval_combo)
+        add_bar.addWidget(self.bell_button)
         layout.addLayout(add_bar)
 
         # Table
@@ -644,11 +653,14 @@ class MainWindow(QMainWindow):
     def _on_one_refreshed(self, product_id, data) -> None:
         self._single_active.discard(product_id)
         ok, message, hit = data.ok, None, None
+        events = []
         if data.ok:
             try:
-                product, _changed, _back, target_hit = self._persist_scrape(
+                product, changed, back, target_hit = self._persist_scrape(
                     product_id, data, snapshot=True
                 )
+                if changed:
+                    events.append(self._make_event(product, back))
                 if target_hit:
                     hit = self._target_hit_record(product)
             except Exception as exc:
@@ -665,6 +677,7 @@ class MainWindow(QMainWindow):
             self.statusBar().showMessage("Refresh complete")
             if hit is not None:
                 self._notify_target_hits([hit])
+            self._log_notifications(events, [hit] if hit is not None else [])
         else:
             self._set_row_status(product_id, "error", message)
             self.statusBar().showMessage(f"Refresh failed: {message}")
@@ -766,6 +779,21 @@ class MainWindow(QMainWindow):
             "target": product.target_price,
         }
 
+    def _make_event(self, product, back) -> dict:
+        """A structured change record for one product (notification + report)."""
+        return {
+            "name": product.name or product.url,
+            "site": self._site_name(product.url),
+            "currency": product.currency,
+            "price_changed": product.price_changed,
+            "prev_price": product.prev_price,
+            "last_price": product.last_price,
+            "stock_changed": product.stock_changed,
+            "prev_stock": product.prev_stock,
+            "last_stock": product.last_stock,
+            "back_in_stock": back,
+        }
+
     def _apply_refresh_result(self, product_id, data) -> None:
         product, changed, back, target_hit = self._persist_scrape(
             product_id, data, snapshot=self._refresh_snapshot
@@ -774,20 +802,8 @@ class MainWindow(QMainWindow):
             return
         if target_hit:
             self._target_hits.append(self._target_hit_record(product))
-        label = product.name or product.url
         if changed:
-            self._refresh_events.append({
-                "name": label,
-                "site": self._site_name(product.url),
-                "currency": product.currency,
-                "price_changed": product.price_changed,
-                "prev_price": product.prev_price,
-                "last_price": product.last_price,
-                "stock_changed": product.stock_changed,
-                "prev_stock": product.prev_stock,
-                "last_stock": product.last_stock,
-                "back_in_stock": back,
-            })
+            self._refresh_events.append(self._make_event(product, back))
 
     @staticmethod
     def _site_name(url: str) -> str:
@@ -859,6 +875,7 @@ class MainWindow(QMainWindow):
         if self._refresh_notify and self._refresh_events:
             self._notifications.notify(self._refresh_title, self._changes_message())
         self._notify_target_hits(self._target_hits)
+        self._log_notifications(self._refresh_events, self._target_hits)
         self.statusBar().showMessage(
             f"Refresh complete — {total} change(s) detected" if total else "Refresh complete"
         )
@@ -882,6 +899,74 @@ class MainWindow(QMainWindow):
         else:
             stock_text = "—"
         return (event["name"], price_text, stock_text)
+
+    # --- in-app notifications center (Phase 40) ----------------------------
+
+    def _event_to_notification(self, event) -> dict:
+        """Turn a change event into a persisted notification entry (bell history)."""
+        cur = event["currency"] or ""
+        parts = []
+        if event["price_changed"] and event["last_price"] is not None:
+            if event["prev_price"] is not None:
+                arrow = "▲" if event["last_price"] > event["prev_price"] else "▼"
+                parts.append(f"{format_price(event['prev_price'], cur)} → "
+                             f"{format_price(event['last_price'], cur)} {arrow}")
+            else:
+                parts.append(format_price(event["last_price"], cur))
+        if event["back_in_stock"]:
+            parts.append("✅ Back in stock")
+        elif event["stock_changed"]:
+            parts.append(f"📦 {event['prev_stock'] or '—'} → {event['last_stock'] or '—'}")
+        kind = "back" if event["back_in_stock"] else ("price" if event["price_changed"] else "stock")
+        return {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "site": event.get("site") or "",
+            "name": event["name"] or "",
+            "detail": "   ".join(parts) or "—",
+            "kind": kind,
+        }
+
+    def _hit_to_notification(self, hit) -> dict:
+        price = format_price(hit["price"], hit["currency"])
+        target = format_price(hit["target"], hit["currency"])
+        return {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "site": hit.get("site") or "",
+            "name": hit["name"] or "",
+            "detail": f"🎯 Target {target} reached (now {price})",
+            "kind": "target",
+        }
+
+    def _log_notifications(self, events, hits) -> None:
+        """Append change/target events to the bell history and refresh the badge."""
+        entries = [self._event_to_notification(e) for e in events]
+        entries += [self._hit_to_notification(h) for h in hits]
+        if entries:
+            self._notif_log.add(entries)
+            self._update_bell()
+
+    def _update_bell(self) -> None:
+        count = self._notif_log.unread_count()
+        self.bell_button.setText(f"🔔 {count}" if count else "🔔")
+
+    def _open_notifications(self) -> None:
+        from ui.notification_center import NotificationCenterDialog
+        rows = [self._notification_row(e) for e in self._notif_log.all()]
+        NotificationCenterDialog(rows, self._clear_notifications, parent=self).exec()
+        self._notif_log.mark_all_read()  # opening = seen
+        self._update_bell()
+
+    def _notification_row(self, entry) -> tuple:
+        ts = entry.get("ts")
+        when = self._format_local(datetime.fromisoformat(ts)) if ts else ""
+        site = entry.get("site") or ""
+        name = entry.get("name") or ""
+        product = f"{site} · {name}" if site else name
+        return (when, product, entry.get("detail") or "—")
+
+    def _clear_notifications(self) -> None:
+        self._notif_log.clear()
+        self._update_bell()
 
     def _take_snapshot(self) -> None:
         """Hourly timer: log current price/stock to history without re-scraping."""

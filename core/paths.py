@@ -36,3 +36,9 @@ def database_path() -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
         return path
     return app_data_dir() / "app.db"
+
+
+def notifications_path() -> Path:
+    """Path to the in-app notifications history (JSON). Sits next to the DB so it
+    follows the same test override, keeping the real history out of dev runs."""
+    return database_path().parent / "notifications.json"
