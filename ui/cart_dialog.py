@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import datastore as repo
+from core.currency import normalize_currency
 from ui.formatting import format_price
 from ui.logos import _domain_key, logo_pixmap
 from ui.theme import link_color
@@ -96,8 +97,8 @@ class CartDialog(QDialog):
         # though they're priced in the same currency as the rest. If exactly one
         # real currency is present, treat the unlabeled ones as that currency so
         # the cart shows a single combined total instead of a phantom second one.
-        known = {(p.currency or "").strip() for p in self.products
-                 if p.last_price is not None and (p.currency or "").strip()}
+        known = {normalize_currency(p.currency) for p in self.products
+                 if p.last_price is not None and normalize_currency(p.currency)}
         self._default_cur = next(iter(known)) if len(known) == 1 else ""
 
         self.table.setRowCount(0)
@@ -160,9 +161,9 @@ class CartDialog(QDialog):
         self.table.setCellWidget(row, _COL_REMOVE, remove)
 
     def _cur(self, product) -> str:
-        """The product's currency, falling back to the cart's single known
-        currency when this product was scraped without a label."""
-        return (product.currency or "").strip() or self._default_cur
+        """The product's normalized currency, falling back to the cart's single
+        known currency when this product was scraped without a label."""
+        return normalize_currency(product.currency) or self._default_cur
 
     def _line_total_text(self, product, qty: int) -> str:
         if product.last_price is None:

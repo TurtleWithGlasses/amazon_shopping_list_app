@@ -381,7 +381,9 @@ too). Clicking the bell opens a **When · Product · Change** window
 **persisted** as JSON next to the DB ([services/notification_log.py](../services/notification_log.py),
 `core.paths.notifications_path()`), capped at 200 and degrading gracefully on a
 missing/corrupt file, so it survives restarts (unread state included). *(Per-row
-deep-link to the product graph left as a future enhancement.)*
+deep-link to the product graph left as a future enhancement.)* **v0.14.1:** the
+notifications window's columns are user-resizable and its size + column widths
+persist across opens (`QSettings`).
 
 ---
 
@@ -409,6 +411,9 @@ sites, so revisit only if browser-fallback sites come to dominate a refresh.
   with an empty `currency`, so prices show without a "TL" suffix. The cart works
   around it (folds blank into the single known currency), but the Amazon adapter
   should capture the currency reliably so the value is correct at the source.
+  *(v0.14.1 added `core/currency.py` normalization so equivalent labels like
+  `TRY`/`TL`/`₺` render and total as one currency — but a truly blank label is
+  still a capture gap, not an alias.)*
 - **Code signing**: unsigned exe/installer triggers SmartScreen. Needs an
   Authenticode certificate (see `BUILD.md`).
 - The `.exe` must be rebuilt (`build.bat`) after dependency or asset changes.

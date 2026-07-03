@@ -9,6 +9,7 @@ from urllib.parse import urlparse
 
 from sqlalchemy import func, select
 
+from .currency import normalize_currency
 from .db import session_scope
 from .models import CartItem, Group, GroupMember, PriceHistory, Product, utcnow
 
@@ -39,7 +40,7 @@ def add_product(
         product = Product(
             url=url,
             name=name,
-            currency=currency,
+            currency=normalize_currency(currency),
             retailer=retailer or _retailer_from_url(url),
             last_price=price,
             last_stock=stock,
@@ -148,7 +149,7 @@ def apply_scrape_result(
         if name:
             product.name = name
         if currency is not None:
-            product.currency = currency
+            product.currency = normalize_currency(currency)
         if price is not None:
             product.last_price = price
         if stock is not None:

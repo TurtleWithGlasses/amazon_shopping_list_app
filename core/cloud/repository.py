@@ -15,6 +15,7 @@ from urllib.parse import urlparse
 
 import httpx
 
+from ..currency import normalize_currency
 from .auth import current_user_id
 from .client import get_client
 
@@ -136,7 +137,7 @@ def add_product(url, name=None, price=None, currency="", stock=None,
         "url": url,
         "retailer": retailer or _retailer_from_url(url),
         "name": name,
-        "currency": currency,
+        "currency": normalize_currency(currency),
         "image_url": image_url,
         "last_price": price,
         "last_stock": stock,
@@ -223,7 +224,7 @@ def apply_scrape_result(product_id, name=None, price=None, currency=None,
     if name:
         updates["name"] = name
     if currency is not None:
-        updates["currency"] = currency
+        updates["currency"] = normalize_currency(currency)
     if price is not None:
         updates["last_price"] = price
     if stock is not None:
