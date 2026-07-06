@@ -28,6 +28,24 @@ def sign_in(email: str, password: str):
     return response
 
 
+def send_password_reset(email: str):
+    """Email a password-reset code (Supabase recovery). The 'Reset Password' email
+    template must include the 6-digit `{{ .Token }}` so the in-app flow can verify
+    it. Neutral — never reveals whether the address has an account."""
+    return get_client().auth.reset_password_for_email(email)
+
+
+def verify_recovery_otp(email: str, token: str):
+    """Verify the recovery code from the reset email, opening a short session so
+    the password can then be changed via update_password()."""
+    global _current_user
+    response = get_client().auth.verify_otp(
+        {"email": email, "token": token, "type": "recovery"}
+    )
+    _current_user = response.user
+    return response
+
+
 def restore_session(refresh_token: str):
     """Re-establish a session from a stored refresh token (for auto-login).
     Raises on an invalid/expired token. Returns the gotrue response."""

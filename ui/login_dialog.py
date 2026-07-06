@@ -19,7 +19,7 @@ class LoginDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Price Tracker — Sign in")
-        self.setMinimumWidth(360)
+        self.setMinimumWidth(520)
 
         layout = QVBoxLayout(self)
 
@@ -51,13 +51,17 @@ class LoginDialog(QDialog):
             self.email_edit.setText(saved_email)
         self.remember_checkbox.setChecked(session_store.has_saved_session())
 
+        # Log in / Register / Forgot password on one row, evenly sized.
         buttons = QHBoxLayout()
         self.login_button = QPushButton("Log in")
         self.register_button = QPushButton("Register")
+        self.forgot_button = QPushButton("Forgot password?")
+        self.forgot_button.setCursor(Qt.CursorShape.PointingHandCursor)
         self.login_button.clicked.connect(self._login)
         self.register_button.clicked.connect(self._register)
-        buttons.addWidget(self.login_button)
-        buttons.addWidget(self.register_button)
+        self.forgot_button.clicked.connect(self._forgot_password)
+        for button in (self.login_button, self.register_button, self.forgot_button):
+            buttons.addWidget(button, 1)  # equal stretch so they align on one row
         layout.addLayout(buttons)
 
         self.status = QLabel("")
@@ -119,6 +123,10 @@ class LoginDialog(QDialog):
             "Confirm your email",
             "Account created. Check your inbox for a confirmation link, then log in.",
         )
+
+    def _forgot_password(self) -> None:
+        from ui.reset_password_dialog import ResetPasswordDialog
+        ResetPasswordDialog(self.email_edit.text().strip(), parent=self).exec()
 
     @staticmethod
     def _friendly_error(exc: Exception) -> str:

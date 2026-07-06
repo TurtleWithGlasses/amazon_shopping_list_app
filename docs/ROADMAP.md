@@ -400,37 +400,31 @@ after a logout/login cycle) is bound via `guard.bind_window()`. `QtNetwork` is
 bundled automatically by the PySide6 PyInstaller hook, so no spec change. No
 schema; no new dependencies.
 
+### Phase 42 — Forgot / reset password
+There was no way to recover a forgotten password. The login dialog now has a
+**"Forgot password?"** button (evenly sized on one row with Log in / Register)
+that opens a two-step dialog ([ui/reset_password_dialog.py](../ui/reset_password_dialog.py),
+email prefilled from the saved email). Chosen a **fully in-app OTP** flow — **no
+hosted page, no redirect config**: (1) enter email → `auth.send_password_reset()`
+→ `reset_password_for_email()` (neutral confirmation, no account-existence leak);
+(2) enter the code from the email + a new password (confirm + length checks,
+Resend button) → `auth.verify_recovery_otp()`
+(`verify_otp({email, token, type: "recovery"})`) opens a short recovery session,
+then the existing `auth.update_password()` sets it. The **only** Supabase-side
+requirement is the *Reset Password* email template containing `{{ .Token }}`
+(branded template in [docs/reset_password_email.html](reset_password_email.html));
+`confirmed.html` stays the plain Phase-25 confirmation page. The code length is
+whatever the project's OTP length is (e.g. 8), and pasted codes are
+whitespace-stripped. No schema; no new Python deps. *(A web-link variant was
+prototyped and dropped — it required hosting/redirect config that added friction
+for no benefit over the in-app code.)*
+
 ---
 
 ## Upcoming
 
-Self-contained: **42** (forgot password).
-
-### Phase 42 — Forgot / reset password
-There's no way to recover a forgotten password. Add a **"Forgot password?"** link
-on the login dialog that emails a reset and lets the user set a new password.
-- **Login dialog:** a "Forgot password?" link opens a small prompt for the email
-  (prefilled from the saved email when present), then calls a new
-  `auth.send_password_reset(email)` →
-  `client.auth.reset_password_for_email(email, {...})`. Show a neutral
-  confirmation regardless of whether the address exists (don't leak account
-  existence).
-- **Reset email (Supabase dashboard):** a branded HTML template like Phase 25's
-  confirmation email — Price Tracker name + cart logo, a clear "Reset your
-  password" CTA, plain-text fallback, sane subject/sender. Configured under
-  Auth → Email Templates → *Reset Password* using `{{ .Token }}` /
-  `{{ .ConfirmationURL }}`.
-- **New-password flow (in-app):** because it's a desktop app, use the **recovery
-  OTP** path rather than only a web redirect — the email includes a 6-digit code
-  (`{{ .Token }}`). The app shows a "Enter the code from your email" field, then
-  a **new-password window** (with confirm + strength/length check):
-  `auth.verify_recovery_otp(email, code)` →
-  `client.auth.verify_otp({"email", "token", "type": "recovery"})` establishes a
-  short recovery session, then `auth.update_password(new_password)` (already
-  exists) sets it. On success, drop back to the login screen (or auto-sign-in).
-- New `ui/reset_password_dialog.py` (request-email + code + new-password steps),
-  two thin `auth.py` helpers, and the dashboard template. No schema; no new deps.
-  Overlaps Phase 25 (branded auth emails) — do the template work together.
+No numbered phases queued — the planned set (through Phase 42) is shipped.
+Candidate next work lives under **Known follow-ups / tech debt** below.
 
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome
 alive across a batch; low value now that the fast path skips Chrome for most
