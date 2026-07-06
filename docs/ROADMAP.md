@@ -385,12 +385,52 @@ deep-link to the product graph left as a future enhancement.)* **v0.14.1:** the
 notifications window's columns are user-resizable and its size + column widths
 persist across opens (`QSettings`).
 
+### Phase 41 — Single running instance (no duplicate launch)
+Clicking the shortcut while the app was already running started a **second copy**,
+doubling the scrapers/timers. Now a Qt-native guard
+([services/single_instance.py](../services/single_instance.py)) enforces one
+instance per OS user via a named `QLocalServer` / `QLocalSocket`. At startup in
+`main()` — before `init_db` or any window — `already_running()` tries to connect
+to `PriceTracker-instance-<user>`: if it connects, it pings the running instance
+to surface and **exits immediately**; otherwise it clears any stale socket (crash
+leftover) and starts listening. On each repeat-launch connection the primary
+`_surface()`s its window — clears the minimized bit (keeping maximized), un-hides
+from the tray, then `raise_()` + `activateWindow()`. Each `MainWindow` (including
+after a logout/login cycle) is bound via `guard.bind_window()`. `QtNetwork` is
+bundled automatically by the PySide6 PyInstaller hook, so no spec change. No
+schema; no new dependencies.
+
 ---
 
 ## Upcoming
 
-No numbered phases queued — the roadmap's planned set (through Phase 40) is
-shipped. Candidate next work lives under **Known follow-ups / tech debt** below.
+Self-contained: **42** (forgot password).
+
+### Phase 42 — Forgot / reset password
+There's no way to recover a forgotten password. Add a **"Forgot password?"** link
+on the login dialog that emails a reset and lets the user set a new password.
+- **Login dialog:** a "Forgot password?" link opens a small prompt for the email
+  (prefilled from the saved email when present), then calls a new
+  `auth.send_password_reset(email)` →
+  `client.auth.reset_password_for_email(email, {...})`. Show a neutral
+  confirmation regardless of whether the address exists (don't leak account
+  existence).
+- **Reset email (Supabase dashboard):** a branded HTML template like Phase 25's
+  confirmation email — Price Tracker name + cart logo, a clear "Reset your
+  password" CTA, plain-text fallback, sane subject/sender. Configured under
+  Auth → Email Templates → *Reset Password* using `{{ .Token }}` /
+  `{{ .ConfirmationURL }}`.
+- **New-password flow (in-app):** because it's a desktop app, use the **recovery
+  OTP** path rather than only a web redirect — the email includes a 6-digit code
+  (`{{ .Token }}`). The app shows a "Enter the code from your email" field, then
+  a **new-password window** (with confirm + strength/length check):
+  `auth.verify_recovery_otp(email, code)` →
+  `client.auth.verify_otp({"email", "token", "type": "recovery"})` establishes a
+  short recovery session, then `auth.update_password(new_password)` (already
+  exists) sets it. On success, drop back to the login screen (or auto-sign-in).
+- New `ui/reset_password_dialog.py` (request-email + code + new-password steps),
+  two thin `auth.py` helpers, and the dashboard template. No schema; no new deps.
+  Overlaps Phase 25 (branded auth emails) — do the template work together.
 
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome
 alive across a batch; low value now that the fast path skips Chrome for most

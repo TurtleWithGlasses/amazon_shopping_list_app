@@ -58,7 +58,7 @@ def _ensure_logged_in() -> bool:
     return LoginDialog().exec() == QDialog.DialogCode.Accepted
 
 
-def _run_cloud(app: QApplication) -> None:
+def _run_cloud(app: QApplication, guard=None) -> None:
     """Login → main window loop. Logout returns to the login screen."""
     from core import datastore
     from core.cloud import auth, repository as cloud_repo, session_store
@@ -68,6 +68,8 @@ def _run_cloud(app: QApplication) -> None:
             return  # cancelled → exit app
         datastore.set_backend(cloud_repo)
         window = MainWindow()
+        if guard is not None:
+            guard.bind_window(window)  # a repeat launch should raise this window
         window.show()
         app.exec()
         if getattr(window, "logout_requested", False):
@@ -90,17 +92,27 @@ def _set_windows_app_id() -> None:
 
 def main() -> None:
     _set_windows_app_id()
-    init_db()  # local SQLite cache schema in %LOCALAPPDATA%\PriceTracker
     app = QApplication(sys.argv)
     app.setApplicationName("Price Tracker")
     app.setOrganizationName("PriceTracker")
+
+    # Single-instance guard: if a copy is already running, ask it to surface its
+    # window and exit now — before any DB/window work — so we don't run a
+    # duplicate set of scrapers and timers.
+    from services.single_instance import SingleInstance
+    guard = SingleInstance()
+    if guard.already_running():
+        return
+
+    init_db()  # local SQLite cache schema in %LOCALAPPDATA%\PriceTracker
     app.setWindowIcon(app_icon())
     apply_theme(app, QSettings().value("theme", DEFAULT_THEME))
 
     if is_configured():
-        _run_cloud(app)
+        _run_cloud(app, guard)
     else:
         window = MainWindow()
+        guard.bind_window(window)
         window.show()
         app.exec()
     sys.exit(0)
