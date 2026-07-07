@@ -5,7 +5,7 @@ from functools import partial
 from urllib.parse import quote_plus, urlparse
 
 from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, QUrl
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QPalette
+from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QPalette
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -1035,6 +1035,20 @@ class MainWindow(QMainWindow):
         else:
             self.statusBar().showMessage("Auto-refresh off — use Refresh All to check manually")
 
+    def _set_interval_ms(self, ms) -> None:
+        """Select an auto-refresh interval by its ms value (used by the tray
+        menu). Routing through the combo persists + applies it and keeps the
+        toolbar in sync — no need to open the window."""
+        index = self.interval_combo.findData(ms)
+        if index >= 0 and index != self.interval_combo.currentIndex():
+            self.interval_combo.setCurrentIndex(index)  # fires _on_interval_changed
+
+    def _sync_tray_interval_checks(self) -> None:
+        """Tick the tray action matching the active interval before the menu shows."""
+        action = self._tray_interval_actions.get(self.interval_combo.currentData())
+        if action is not None:
+            action.setChecked(True)
+
     def _build_tray(self) -> None:
         icon = app_icon()
         if icon.isNull():
@@ -1048,6 +1062,21 @@ class MainWindow(QMainWindow):
         menu = QMenu()
         menu.addAction("Show", self._restore_window)
         menu.addAction("Refresh now", self._refresh_all)
+
+        # Auto-refresh interval, changeable from the tray (mirrors the toolbar
+        # combo). Checkable + exclusive so the current choice shows a radio dot.
+        interval_menu = menu.addMenu("Auto-refresh")
+        self._tray_interval_group = QActionGroup(self)
+        self._tray_interval_group.setExclusive(True)
+        self._tray_interval_actions = {}
+        for label, ms in REFRESH_INTERVAL_OPTIONS:
+            action = interval_menu.addAction(label)
+            action.setCheckable(True)
+            self._tray_interval_group.addAction(action)
+            self._tray_interval_actions[ms] = action
+            action.triggered.connect(partial(self._set_interval_ms, ms))
+        interval_menu.aboutToShow.connect(self._sync_tray_interval_checks)
+
         menu.addSeparator()
         menu.addAction("Quit", self._quit)
         self.tray_icon.setContextMenu(menu)

@@ -398,7 +398,9 @@ leftover) and starts listening. On each repeat-launch connection the primary
 from the tray, then `raise_()` + `activateWindow()`. Each `MainWindow` (including
 after a logout/login cycle) is bound via `guard.bind_window()`. `QtNetwork` is
 bundled automatically by the PySide6 PyInstaller hook, so no spec change. No
-schema; no new dependencies.
+schema; no new dependencies. **v0.16.1:** the tray menu gained an **Auto-refresh**
+submenu (5 / 15 / 30 min / 1 hour / Never, checkable) that changes the interval
+without opening the window, mirroring the toolbar combo.
 
 ### Phase 42 — Forgot / reset password
 There was no way to recover a forgotten password. The login dialog now has a

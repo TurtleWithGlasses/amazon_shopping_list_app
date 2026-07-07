@@ -160,10 +160,13 @@ def _qss(t: dict, font_css: str) -> str:
     QPushButton:pressed {{ background: {accent}; color: {accent_text}; }}
     QPushButton:disabled {{ background: {window}; color: {subtext}; }}
 
-    /* M3 filled primary button — set objectName('primary') on key CTAs. */
+    /* M3 filled primary button — set objectName('primary') on key CTAs.
+       Radius matches the tonal buttons (16px). NB: Qt renders SQUARE when the
+       radius exceeds half the button height (it does NOT clamp), which is why a
+       larger value looked boxy — keep it <= the tonal radius. */
     QPushButton#primary {{
         background: {accent}; color: {accent_text};
-        border: none; border-radius: 18px; padding: 8px 20px; font-weight: 600;
+        border: none; border-radius: 16px; padding: 8px 20px; font-weight: 600;
     }}
     QPushButton#primary:hover {{ background: {selection}; }}
     QPushButton#primary:disabled {{ background: {surface_variant}; color: {subtext}; }}
