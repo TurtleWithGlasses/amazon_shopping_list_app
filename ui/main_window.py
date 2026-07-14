@@ -623,11 +623,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Could not add product", data.error or "Unknown error.")
             self.statusBar().showMessage("Add failed")
             return
-        repo.add_product(data.url, data.name, data.price, data.currency, data.stock,
-                         image_url=data.image_url)
+        product = repo.add_product(data.url, data.name, data.price, data.currency,
+                                   data.stock, image_url=data.image_url)
         self.url_input.clear()
         self.reload()
-        self.statusBar().showMessage(f"Added: {data.name}")
+        if getattr(product, "revived", False):
+            self.statusBar().showMessage(f"Restored: {data.name} — price history reattached")
+        else:
+            self.statusBar().showMessage(f"Added: {data.name}")
 
     def _refresh_all(self) -> None:
         """Manual refresh: re-scrape all, log a history point, and notify
@@ -772,6 +775,8 @@ class MainWindow(QMainWindow):
 
     def _target_hit_record(self, product) -> dict:
         return {
+            "id": product.id,
+            "url": product.url,
             "name": product.name or product.url,
             "site": self._site_name(product.url),
             "currency": product.currency,
@@ -782,6 +787,8 @@ class MainWindow(QMainWindow):
     def _make_event(self, product, back) -> dict:
         """A structured change record for one product (notification + report)."""
         return {
+            "id": product.id,
+            "url": product.url,
             "name": product.name or product.url,
             "site": self._site_name(product.url),
             "currency": product.currency,
@@ -920,6 +927,8 @@ class MainWindow(QMainWindow):
         kind = "back" if event["back_in_stock"] else ("price" if event["price_changed"] else "stock")
         return {
             "ts": datetime.now(timezone.utc).isoformat(),
+            "product_id": event.get("id"),
+            "url": event.get("url"),
             "site": event.get("site") or "",
             "name": event["name"] or "",
             "detail": "   ".join(parts) or "—",
@@ -931,6 +940,8 @@ class MainWindow(QMainWindow):
         target = format_price(hit["target"], hit["currency"])
         return {
             "ts": datetime.now(timezone.utc).isoformat(),
+            "product_id": hit.get("id"),
+            "url": hit.get("url"),
             "site": hit.get("site") or "",
             "name": hit["name"] or "",
             "detail": f"🎯 Target {target} reached (now {price})",
@@ -952,17 +963,29 @@ class MainWindow(QMainWindow):
     def _open_notifications(self) -> None:
         from ui.notification_center import NotificationCenterDialog
         rows = [self._notification_row(e) for e in self._notif_log.all()]
-        NotificationCenterDialog(rows, self._clear_notifications, parent=self).exec()
+        NotificationCenterDialog(
+            rows, self._clear_notifications,
+            on_open=lambda url: QDesktopServices.openUrl(QUrl(url)),
+            on_graph=self._show_graph,
+            on_delete=self._delete_product,
+            parent=self,
+        ).exec()
         self._notif_log.mark_all_read()  # opening = seen
         self._update_bell()
 
-    def _notification_row(self, entry) -> tuple:
+    def _notification_row(self, entry) -> dict:
         ts = entry.get("ts")
         when = self._format_local(datetime.fromisoformat(ts)) if ts else ""
         site = entry.get("site") or ""
         name = entry.get("name") or ""
         product = f"{site} · {name}" if site else name
-        return (when, product, entry.get("detail") or "—")
+        return {
+            "when": when,
+            "product": product,
+            "change": entry.get("detail") or "—",
+            "url": entry.get("url"),
+            "product_id": entry.get("product_id"),
+        }
 
     def _clear_notifications(self) -> None:
         self._notif_log.clear()
@@ -1450,8 +1473,9 @@ class MainWindow(QMainWindow):
             return
         confirm = QMessageBox.question(
             self,
-            "Delete product",
-            f"Delete '{product.name or product.url}' and its price history?",
+            "Remove product",
+            f"Remove '{product.name or product.url}' from your list?\n\n"
+            "Its price history is kept — re-adding the same link later restores it.",
         )
         if confirm == QMessageBox.StandardButton.Yes:
             repo.delete_product(product_id)

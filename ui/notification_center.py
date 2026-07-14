@@ -1,8 +1,9 @@
 """In-app notifications center (Phase 40): a window listing recent changes.
 
-Presentation-only — it receives pre-formatted rows (when · product · change) and
-a clear callback, mirroring StartupChangesDialog. Newest first. Columns are
-user-resizable, and the window size + column widths persist across opens.
+Receives pre-formatted rows (each a dict: when · product · change, plus the
+product's url / id) and callbacks. Clicking a product opens its link; right-click
+offers Graph / Delete, wired to the main window's handlers. Newest first. Columns
+are user-resizable, and the window size + column widths persist across opens.
 """
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtWidgets import (
@@ -10,6 +11,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QTableWidget,
@@ -17,21 +19,32 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from ui.theme import link_color
+
 _GEOMETRY_KEY = "notif_center/geometry"
 _HEADER_KEY = "notif_center/header_state_v1"
-# Sensible first-run column widths (When, Product, Change).
-_DEFAULT_WIDTHS = (140, 560, 360)
+_DEFAULT_WIDTHS = (140, 560, 360)  # When, Product, Change
+
+_COL_WHEN, _COL_PRODUCT, _COL_CHANGE = range(3)
+_URL_ROLE = Qt.ItemDataRole.UserRole
+_PID_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
 class NotificationCenterDialog(QDialog):
-    def __init__(self, rows, on_clear, parent=None):
+    def __init__(self, rows, on_clear, on_open=None, on_graph=None, on_delete=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Notifications")
         self._on_clear = on_clear
+        self._on_open = on_open
+        self._on_graph = on_graph
+        self._on_delete = on_delete
 
         layout = QVBoxLayout(self)
         if rows:
-            layout.addWidget(QLabel(f"{len(rows)} recent change(s), newest first:"))
+            layout.addWidget(QLabel(
+                f"{len(rows)} recent change(s), newest first — click a product to "
+                "open it, right-click for graph / delete:"
+            ))
         else:
             layout.addWidget(QLabel(
                 "No notifications yet. Price and stock changes from each refresh "
@@ -45,15 +58,30 @@ class NotificationCenterDialog(QDialog):
         self.table.setSelectionBehavior(QTableWidget.SelectionBehavior.SelectRows)
         self.table.setWordWrap(False)
         self.table.setHorizontalScrollMode(QTableWidget.ScrollMode.ScrollPerPixel)
-        for r, (when, product, change) in enumerate(rows):
-            when_item = QTableWidgetItem(when)
+        link = link_color()
+        for r, row in enumerate(rows):
+            when_item = QTableWidgetItem(row.get("when", ""))
             when_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            self.table.setItem(r, 0, when_item)
-            self.table.setItem(r, 1, QTableWidgetItem(product))
-            self.table.setItem(r, 2, QTableWidgetItem(change))
+            self.table.setItem(r, _COL_WHEN, when_item)
 
-        # All columns user-resizable; a horizontal scrollbar appears when the
-        # content is wider than the viewport (long product names / change text).
+            product_item = QTableWidgetItem(row.get("product", ""))
+            url = row.get("url")
+            pid = row.get("product_id")
+            if url:  # make it read + behave like a link
+                product_item.setData(_URL_ROLE, url)
+                product_item.setForeground(link)
+                f = product_item.font(); f.setUnderline(True); product_item.setFont(f)
+                product_item.setToolTip(f"Open: {url}")
+            if pid is not None:
+                product_item.setData(_PID_ROLE, pid)
+            self.table.setItem(r, _COL_PRODUCT, product_item)
+
+            self.table.setItem(r, _COL_CHANGE, QTableWidgetItem(row.get("change", "")))
+
+        self.table.cellClicked.connect(self._on_cell_clicked)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self._show_row_menu)
+
         header = self.table.horizontalHeader()
         header.setStretchLastSection(False)
         for col in range(3):
@@ -74,6 +102,32 @@ class NotificationCenterDialog(QDialog):
 
         self._restore_state()
 
+    # --- row interactions --------------------------------------------------
+
+    def _on_cell_clicked(self, row: int, col: int) -> None:
+        if col != _COL_PRODUCT or self._on_open is None:
+            return
+        item = self.table.item(row, _COL_PRODUCT)
+        url = item.data(_URL_ROLE) if item else None
+        if url:
+            self._on_open(url)
+
+    def _show_row_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if row < 0:
+            return
+        item = self.table.item(row, _COL_PRODUCT)
+        product_id = item.data(_PID_ROLE) if item else None
+        if product_id is None:  # older notifications have no product reference
+            return
+        menu = QMenu(self)
+        if self._on_graph is not None:
+            menu.addAction("Graph", lambda: self._on_graph(product_id))
+        if self._on_delete is not None:
+            menu.addAction("Delete", lambda: self._on_delete(product_id))
+        if menu.actions():
+            menu.exec(self.table.viewport().mapToGlobal(pos))
+
     # --- persistence -------------------------------------------------------
 
     def _restore_state(self) -> None:
@@ -93,7 +147,6 @@ class NotificationCenterDialog(QDialog):
         settings.setValue(_HEADER_KEY, self.table.horizontalHeader().saveState())
 
     def done(self, result) -> None:
-        # Single funnel for accept / reject / window-close: persist before closing.
         self._save_state()
         super().done(result)
 

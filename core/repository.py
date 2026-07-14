@@ -24,6 +24,16 @@ def _retailer_from_url(url: str) -> str:
     return host or "unknown"
 
 
+def _canonical_url(url: str) -> str:
+    """Compare-friendly form (no scheme/www/query/trailing slash) for matching a
+    re-added URL to a previously soft-deleted product."""
+    parsed = urlparse(url or "")
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return f"{host}{parsed.path.rstrip('/')}"
+
+
 def add_product(
     url: str,
     name: Optional[str] = None,
@@ -34,9 +44,39 @@ def add_product(
     user_id: Optional[int] = None,
     image_url: Optional[str] = None,
 ) -> Product:
-    """Insert a product and seed its first price-history row if we already have data."""
+    """Insert a product and seed its first price-history row if we already have
+    data. If the same URL was removed before (soft-deleted), revive that record
+    instead so its price history comes back. The returned object carries a
+    transient ``revived`` flag."""
     with session_scope() as session:
+        target = _canonical_url(url)
+        revived = next(
+            (p for p in session.scalars(select(Product).where(Product.deleted_at.is_not(None)))
+             if _canonical_url(p.url) == target),
+            None,
+        )
         next_position = (session.scalar(select(func.max(Product.position))) or 0) + 1
+
+        if revived is not None:
+            revived.deleted_at = None          # back on the list, history intact
+            revived.url = url
+            revived.retailer = retailer or _retailer_from_url(url)
+            revived.currency = normalize_currency(currency)
+            revived.position = next_position   # move to the end
+            if name is not None:
+                revived.name = name
+            if price is not None:
+                revived.last_price = price
+            if stock is not None:
+                revived.last_stock = stock
+            if image_url:
+                revived.image_url = image_url
+            if price is not None or stock is not None:
+                revived.last_checked = utcnow()
+                session.add(PriceHistory(product_id=revived.id, price=price, stock=stock))
+            revived.revived = True
+            return revived
+
         product = Product(
             url=url,
             name=name,
@@ -55,12 +95,17 @@ def add_product(
         if price is not None or stock is not None:
             session.add(PriceHistory(product_id=product.id, price=price, stock=stock))
 
+        product.revived = False
         return product
 
 
 def list_products(user_id: Optional[int] = None) -> List[Product]:
     with session_scope() as session:
-        stmt = select(Product).order_by(Product.position, Product.created_at)
+        stmt = (
+            select(Product)
+            .where(Product.deleted_at.is_(None))  # hide soft-deleted products
+            .order_by(Product.position, Product.created_at)
+        )
         if user_id is not None:
             stmt = stmt.where(Product.user_id == user_id)
         return list(session.scalars(stmt))
@@ -105,11 +150,13 @@ def update_product(
 
 
 def delete_product(product_id: int) -> bool:
+    """Soft delete: hide the product but keep its row + price history, so re-adding
+    the same URL later revives it (see add_product)."""
     with session_scope() as session:
         product = session.get(Product, product_id)
         if product is None:
             return False
-        session.delete(product)  # cascades to price_history
+        product.deleted_at = utcnow()
         return True
 
 
@@ -278,7 +325,7 @@ def group_members(group_id: int) -> List[Product]:
         stmt = (
             select(Product)
             .join(GroupMember, GroupMember.product_id == Product.id)
-            .where(GroupMember.group_id == group_id)
+            .where(GroupMember.group_id == group_id, Product.deleted_at.is_(None))
             .order_by(Product.position, Product.created_at)
         )
         return list(session.scalars(stmt))
@@ -341,6 +388,7 @@ def cart_products() -> List[Product]:
         rows = session.execute(
             select(Product, CartItem.quantity)
             .join(CartItem, CartItem.product_id == Product.id)
+            .where(Product.deleted_at.is_(None))
             .order_by(Product.position, Product.created_at)
         ).all()
         products = []

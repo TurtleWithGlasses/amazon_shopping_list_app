@@ -57,6 +57,7 @@ class CloudProduct:
     created_at: Optional[datetime]
     last_checked: Optional[datetime]
     target_price: Optional[float] = None
+    deleted_at: Optional[datetime] = None
 
 
 @dataclass
@@ -90,6 +91,16 @@ def _retailer_from_url(url: str) -> str:
     return host or "unknown"
 
 
+def _canonical_url(url: str) -> str:
+    """Compare-friendly URL (no scheme/www/query/trailing slash) for matching a
+    re-added URL to a previously soft-deleted product."""
+    parsed = urlparse(url or "")
+    host = parsed.netloc.lower()
+    if host.startswith("www."):
+        host = host[4:]
+    return f"{host}{parsed.path.rstrip('/')}"
+
+
 def _to_product(row: dict) -> CloudProduct:
     return CloudProduct(
         id=row["id"],
@@ -108,6 +119,7 @@ def _to_product(row: dict) -> CloudProduct:
         created_at=_parse_dt(row.get("created_at")),
         last_checked=_parse_dt(row.get("last_checked")),
         target_price=row.get("target_price"),
+        deleted_at=_parse_dt(row.get("deleted_at")),
     )
 
 
@@ -132,6 +144,38 @@ def _next_position(client) -> int:
 def add_product(url, name=None, price=None, currency="", stock=None,
                 retailer=None, user_id=None, image_url=None) -> CloudProduct:
     client = get_client()
+    # Revive a previously-removed (soft-deleted) product with the same URL so its
+    # price history comes back, instead of inserting a fresh row.
+    target = _canonical_url(url)
+    deleted = client.table("products").select("*").not_.is_("deleted_at", "null").execute().data
+    revived = next((r for r in deleted if _canonical_url(r.get("url", "")) == target), None)
+    if revived is not None:
+        updates = {
+            "deleted_at": None,
+            "url": url,
+            "retailer": retailer or _retailer_from_url(url),
+            "currency": normalize_currency(currency),
+            "position": _next_position(client),
+        }
+        if name is not None:
+            updates["name"] = name
+        if price is not None:
+            updates["last_price"] = price
+        if stock is not None:
+            updates["last_stock"] = stock
+        if image_url:
+            updates["image_url"] = image_url
+        if price is not None or stock is not None:
+            updates["last_checked"] = _now_iso()
+        row = client.table("products").update(updates).eq("id", revived["id"]).execute().data[0]
+        if price is not None or stock is not None:
+            client.table("price_history").insert(
+                {"product_id": row["id"], "price": price, "stock": stock}
+            ).execute()
+        product = _to_product(row)
+        product.revived = True
+        return product
+
     payload = {
         "user_id": user_id or current_user_id(),
         "url": url,
@@ -149,14 +193,17 @@ def add_product(url, name=None, price=None, currency="", stock=None,
         client.table("price_history").insert(
             {"product_id": row["id"], "price": price, "stock": stock}
         ).execute()
-    return _to_product(row)
+    product = _to_product(row)
+    product.revived = False
+    return product
 
 
 @_resilient
 def list_products(user_id=None) -> List[CloudProduct]:
-    # RLS already restricts to the current user.
+    # RLS already restricts to the current user; hide soft-deleted products.
     rows = (
         get_client().table("products").select("*")
+        .is_("deleted_at", "null")
         .order("position").order("created_at").execute().data
     )
     return [_to_product(r) for r in rows]
@@ -196,7 +243,10 @@ def update_product(product_id, name=None, url=None, target_price=_UNSET) -> Opti
 
 @_resilient
 def delete_product(product_id) -> bool:
-    rows = get_client().table("products").delete().eq("id", product_id).execute().data
+    """Soft delete: keep the row + price history so re-adding revives it."""
+    rows = get_client().table("products").update(
+        {"deleted_at": _now_iso()}
+    ).eq("id", product_id).execute().data
     return bool(rows)
 
 
@@ -353,7 +403,8 @@ def group_members(group_id) -> List[CloudProduct]:
     ids = [m["product_id"] for m in member_rows]
     if not ids:
         return []
-    rows = client.table("products").select("*").in_("id", ids).order("position").execute().data
+    rows = (client.table("products").select("*").in_("id", ids)
+            .is_("deleted_at", "null").order("position").execute().data)
     return [_to_product(r) for r in rows]
 
 
@@ -418,7 +469,8 @@ def cart_products() -> List[CloudProduct]:
     qty = {r["product_id"]: r["quantity"] for r in rows}
     if not qty:
         return []
-    prows = client.table("products").select("*").in_("id", list(qty)).order("position").execute().data
+    prows = (client.table("products").select("*").in_("id", list(qty))
+             .is_("deleted_at", "null").order("position").execute().data)
     products = []
     for r in prows:
         product = _to_product(r)

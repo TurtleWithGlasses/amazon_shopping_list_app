@@ -19,7 +19,8 @@ create table if not exists public.products (
     position        integer not null default 0,
     created_at      timestamptz not null default now(),
     last_checked    timestamptz,
-    target_price    double precision
+    target_price    double precision,
+    deleted_at      timestamptz
 );
 create index if not exists products_user_idx on public.products (user_id);
 
@@ -29,6 +30,9 @@ alter table public.products add column if not exists position integer not null d
 alter table public.products add column if not exists image_url text;
 -- Target-price alert threshold (Phase 33).
 alter table public.products add column if not exists target_price double precision;
+-- Soft delete: removed products are hidden (deleted_at set) so re-adding the same
+-- URL revives them with their price history (Phase 43).
+alter table public.products add column if not exists deleted_at timestamptz;
 
 create table if not exists public.price_history (
     id            bigint generated always as identity primary key,

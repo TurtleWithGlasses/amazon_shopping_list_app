@@ -421,11 +421,35 @@ whitespace-stripped. No schema; no new Python deps. *(A web-link variant was
 prototyped and dropped — it required hosting/redirect config that added friction
 for no benefit over the in-app code.)*
 
+### Phase 43 — Removed-product history revival (soft delete)
+Removing a product used to cascade-delete its `price_history`, so re-adding the
+same link started blank. Removal is now a **soft delete** — a new `deleted_at`
+column hides the product but keeps its row and history. Re-adding the same URL
+**revives** that record (matched by canonical URL, so query-string differences
+still match): `add_product` clears `deleted_at`, refreshes the values, moves it to
+the end, appends a new history point, and returns a transient `revived` flag (the
+UI shows "Restored: … — price history reattached"). `delete_product` sets
+`deleted_at`; `list_products` / `group_members` / cart queries filter it out (both
+backends). Local DBs get the column via a tiny `db._migrate()` (`ALTER TABLE`);
+cloud via `alter table … add column if not exists deleted_at` in
+[supabase/schema.sql](../supabase/schema.sql). The remove dialog is reworded to
+explain history is kept. *(Trade-off: a removed-and-never-re-added product lingers
+hidden; a "delete permanently" option can be added later.)*
+
+### Phase 44 — Actionable notifications center
+The notifications window (Phase 40) is now interactive, reusing the main window's
+handlers. Notification entries carry the product's `id` + `url` (threaded through
+`_make_event` / `_target_hit_record`), so in the list: **clicking a product opens
+its link** (rendered as a themed link), and **right-click → Graph / Delete** open
+the price-history graph (`_show_graph`) or remove the product (`_delete_product`,
+same confirm + soft delete — the graph still works afterward since history is
+kept). Older entries without an `id`/`url` degrade to plain text (no link/menu).
+
 ---
 
 ## Upcoming
 
-No numbered phases queued — the planned set (through Phase 42) is shipped.
+No numbered phases queued — the planned set (through Phase 44) is shipped.
 Candidate next work lives under **Known follow-ups / tech debt** below.
 
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome

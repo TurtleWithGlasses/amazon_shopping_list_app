@@ -54,6 +54,10 @@ class Product(Base):
 
     position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # Soft delete: removing a product sets this instead of deleting the row, so
+    # its price history survives and re-adding the same URL can revive it.
+    deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     last_checked: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 

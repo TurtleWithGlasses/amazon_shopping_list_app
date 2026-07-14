@@ -2,7 +2,7 @@
 from contextlib import contextmanager
 from typing import Iterator
 
-from sqlalchemy import create_engine, event
+from sqlalchemy import create_engine, event, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -37,8 +37,19 @@ def get_session_factory() -> sessionmaker:
 
 
 def init_db() -> None:
-    """Create all tables if they don't exist. Safe to call on every startup."""
-    Base.metadata.create_all(get_engine())
+    """Create all tables if they don't exist, then apply small in-place column
+    migrations. Safe to call on every startup."""
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    _migrate(engine)
+
+
+def _migrate(engine: Engine) -> None:
+    """Add columns that create_all can't add to a pre-existing table."""
+    with engine.begin() as conn:
+        existing = {row[1] for row in conn.execute(text("PRAGMA table_info(products)"))}
+        if "deleted_at" not in existing:
+            conn.execute(text("ALTER TABLE products ADD COLUMN deleted_at DATETIME"))
 
 
 @contextmanager
