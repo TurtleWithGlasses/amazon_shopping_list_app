@@ -83,4 +83,7 @@ class GroupsDialog(QDialog):
         if not sel:
             return
         group_id, group_name = sel
-        GroupViewDialog(group_id, group_name, parent=self).exec()
+        # Let a delete inside the group view refresh the main window's list too.
+        on_changed = getattr(self.parent(), "reload", None)
+        GroupViewDialog(group_id, group_name, parent=self, on_changed=on_changed).exec()
+        self._reload()  # member counts may have changed

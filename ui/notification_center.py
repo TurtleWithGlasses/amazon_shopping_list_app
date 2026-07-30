@@ -6,6 +6,7 @@ offers Graph / Delete, wired to the main window's handlers. Newest first. Column
 are user-resizable, and the window size + column widths persist across opens.
 """
 from PySide6.QtCore import QSettings, Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
@@ -28,6 +29,10 @@ _DEFAULT_WIDTHS = (140, 560, 360)  # When, Product, Change
 _COL_WHEN, _COL_PRODUCT, _COL_CHANGE = range(3)
 _URL_ROLE = Qt.ItemDataRole.UserRole
 _PID_ROLE = Qt.ItemDataRole.UserRole + 1
+
+# Price-direction colors for the Change cell (matches the main table convention).
+_PRICE_UP_COLOR = QColor("#cc3b3b")    # price rose → red (buyer's view)
+_PRICE_DOWN_COLOR = QColor("#2e9e44")  # price fell → green
 
 
 class NotificationCenterDialog(QDialog):
@@ -76,7 +81,13 @@ class NotificationCenterDialog(QDialog):
                 product_item.setData(_PID_ROLE, pid)
             self.table.setItem(r, _COL_PRODUCT, product_item)
 
-            self.table.setItem(r, _COL_CHANGE, QTableWidgetItem(row.get("change", "")))
+            change_text = row.get("change", "")
+            change_item = QTableWidgetItem(change_text)
+            if "▲" in change_text:      # price rose
+                change_item.setForeground(_PRICE_UP_COLOR)
+            elif "▼" in change_text:    # price fell
+                change_item.setForeground(_PRICE_DOWN_COLOR)
+            self.table.setItem(r, _COL_CHANGE, change_item)
 
         self.table.cellClicked.connect(self._on_cell_clicked)
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)

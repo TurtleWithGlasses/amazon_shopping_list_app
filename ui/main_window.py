@@ -1280,11 +1280,13 @@ class MainWindow(QMainWindow):
 
     def _open_group(self, group_id, group_name) -> None:
         from ui.group_view_dialog import GroupViewDialog
-        GroupViewDialog(group_id, group_name, parent=self).exec()
+        GroupViewDialog(group_id, group_name, parent=self, on_changed=self.reload).exec()
+        self.reload()  # reflect any deletions made in the group view
 
     def _open_groups(self) -> None:
         from ui.groups_dialog import GroupsDialog
         GroupsDialog(self).exec()
+        self.reload()  # a group view opened from here may have deleted products
 
     # --- shopping cart (Phase 38) ------------------------------------------
 

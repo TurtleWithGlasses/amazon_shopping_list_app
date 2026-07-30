@@ -9,6 +9,8 @@ from PySide6.QtWidgets import (
     QDialog,
     QHeaderView,
     QLabel,
+    QMenu,
+    QMessageBox,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -32,13 +34,26 @@ def _site_name(url: str) -> str:
 
 
 class GroupViewDialog(QDialog):
-    def __init__(self, group_id: int, group_name: str, parent=None):
+    def __init__(self, group_id: int, group_name: str, parent=None, on_changed=None):
         super().__init__(parent)
+        self.group_id = group_id
+        self.group_name = group_name
+        self._on_changed = on_changed  # called after a delete so the caller refreshes
         self.setWindowTitle(f"Group — {group_name}")
         self.resize(860, 680)
-        layout = QVBoxLayout(self)
+        self._layout = QVBoxLayout(self)
+        self._populate()
 
-        members = repo.group_members(group_id)
+    def _populate(self) -> None:
+        """(Re)build the members table + graph from the current group membership.
+        Called on open and again after a product is deleted from the group."""
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            widget = item.widget()
+            if widget is not None:
+                widget.deleteLater()
+
+        members = repo.group_members(self.group_id)
         # Cheapest first (products without a price sort to the bottom).
         members.sort(key=lambda m: (m.last_price is None, m.last_price or 0.0))
         self.members = members
@@ -50,12 +65,12 @@ class GroupViewDialog(QDialog):
         self._cheapest_id = priced[0].id if priced else None
 
         if not members:
-            layout.addWidget(QLabel("This group has no products yet."))
+            self._layout.addWidget(QLabel("This group has no products yet."))
             return
 
-        layout.addWidget(QLabel(
-            f"<b>{group_name}</b> — {len(members)} product(s); cheapest first, "
-            "highlighted in green. Click a name to open it."
+        self._layout.addWidget(QLabel(
+            f"<b>{self.group_name}</b> — {len(members)} product(s); cheapest first, "
+            "highlighted in green. Click a name to open it; right-click to delete."
         ))
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -64,7 +79,7 @@ class GroupViewDialog(QDialog):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         splitter.setSizes([230, 380])
-        layout.addWidget(splitter, 1)
+        self._layout.addWidget(splitter, 1)
 
     # --- members table -----------------------------------------------------
 
@@ -84,6 +99,8 @@ class GroupViewDialog(QDialog):
         table.setColumnWidth(_COL_PRICE, 130)
         table.setColumnWidth(_COL_LOW, 130)
         table.cellClicked.connect(self._open_link)
+        table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        table.customContextMenuRequested.connect(self._show_row_menu)
 
         since30 = datetime.now(timezone.utc) - timedelta(days=30)
         for product in self.members:
@@ -131,6 +148,31 @@ class GroupViewDialog(QDialog):
         url = item.data(Qt.ItemDataRole.UserRole) if item else None
         if url:
             QDesktopServices.openUrl(QUrl(url))
+
+    # --- delete a product from the group + main list -----------------------
+
+    def _show_row_menu(self, pos) -> None:
+        row = self.table.rowAt(pos.y())
+        if row < 0 or row >= len(self.members):  # rows are in self.members order
+            return
+        product = self.members[row]
+        menu = QMenu(self)
+        menu.addAction("Delete", lambda: self._delete(product))
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _delete(self, product) -> None:
+        confirm = QMessageBox.question(
+            self, "Delete product",
+            f"Remove '{product.name or product.url}' from this group and your list?\n\n"
+            "Its price history is kept — re-adding the same link later restores it.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        repo.remove_from_group(self.group_id, product.id)  # drop group membership
+        repo.delete_product(product.id)                    # soft-delete from the list
+        if self._on_changed is not None:
+            self._on_changed()   # let the main window refresh its table
+        self._populate()         # rebuild this view without the product
 
     @staticmethod
     def _thirty_day_low(product_id, since):

@@ -305,7 +305,10 @@ with a color swatch, logo, clickable name link, current price, and 30-day low
 tagged by store, with hover tooltips (`site · product · price · time`); a
 draggable splitter sizes the table vs. graph. Membership is a reference (FK
 `on delete cascade`), so deleting/refreshing a product flows through
-automatically. Group-level alerts can layer on later via Phase 33.
+automatically. Group-level alerts can layer on later via Phase 33. **v0.17.1:**
+right-click a product in the group view → **Delete** removes it from the group
+(`remove_from_group`) and the main list (`delete_product`, soft — history kept);
+the view rebuilds and the main window refreshes via an `on_changed` callback.
 
 ### Phase 35 — "Search on Google" (find it elsewhere)
 Per-product **"Search on Google…"** (right-click) opens a Google web search for
@@ -444,6 +447,8 @@ its link** (rendered as a themed link), and **right-click → Graph / Delete** o
 the price-history graph (`_show_graph`) or remove the product (`_delete_product`,
 same confirm + soft delete — the graph still works afterward since history is
 kept). Older entries without an `id`/`url` degrade to plain text (no link/menu).
+**v0.17.1:** the Change cell is colored by price direction (rose → red, fell →
+green, keyed off the ▲/▼ already in the text, so it colors old entries too).
 
 ---
 
