@@ -28,7 +28,8 @@ from ui.formatting import format_price
 from ui.logos import _domain_key, logo_pixmap
 from ui.theme import link_color
 
-_COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_QTY, _COL_TOTAL, _COL_REMOVE = range(7)
+(_COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_QTY, _COL_TOTAL,
+ _COL_REMOVE, _COL_DELETE) = range(8)
 _UP_COLOR = "#cc3b3b"    # price rose (buyer's view)
 _DOWN_COLOR = "#2e9e44"  # price fell
 
@@ -38,10 +39,11 @@ def _site_name(url: str) -> str:
 
 
 class CartDialog(QDialog):
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, on_changed=None):
         super().__init__(parent)
+        self._on_changed = on_changed  # called after a delete so the caller refreshes
         self.setWindowTitle("Shopping cart")
-        self.resize(840, 560)
+        self.resize(900, 560)
         layout = QVBoxLayout(self)
 
         self._intro = QLabel()
@@ -49,9 +51,9 @@ class CartDialog(QDialog):
         self._intro.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._intro)
 
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["", "Product", "Site", "Unit price", "Qty", "Line total", ""]
+            ["", "Product", "Site", "Unit price", "Qty", "Line total", "", ""]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -65,6 +67,7 @@ class CartDialog(QDialog):
         self.table.setColumnWidth(_COL_QTY, 80)
         self.table.setColumnWidth(_COL_TOTAL, 130)
         self.table.setColumnWidth(_COL_REMOVE, 90)
+        self.table.setColumnWidth(_COL_DELETE, 90)
         self.table.cellClicked.connect(self._open_link)
         layout.addWidget(self.table, 1)
 
@@ -157,8 +160,14 @@ class CartDialog(QDialog):
         self._total_items[product.id] = total_item
 
         remove = QPushButton("Remove")
+        remove.setToolTip("Remove from the cart (keeps tracking the product)")
         remove.clicked.connect(partial(self._remove, product.id))
         self.table.setCellWidget(row, _COL_REMOVE, remove)
+
+        delete = QPushButton("Delete")
+        delete.setToolTip("Delete the product from your list (and the cart)")
+        delete.clicked.connect(partial(self._delete, product))
+        self.table.setCellWidget(row, _COL_DELETE, delete)
 
     def _cur(self, product) -> str:
         """The product's normalized currency, falling back to the cart's single
@@ -211,6 +220,22 @@ class CartDialog(QDialog):
 
     def _remove(self, product_id) -> None:
         repo.remove_from_cart(product_id)
+        self._reload()
+
+    def _delete(self, product) -> None:
+        """Delete the product from the user's list (soft delete) and the cart."""
+        confirm = QMessageBox.question(
+            self, "Delete product",
+            f"Remove '{product.name or product.url}' from your list?\n\n"
+            "It's removed from the cart too. Its price history is kept — re-adding "
+            "the same link later restores it.",
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+        repo.remove_from_cart(product.id)  # drop cart membership
+        repo.delete_product(product.id)    # soft-delete from the main list
+        if self._on_changed is not None:
+            self._on_changed()  # let the main window refresh its table
         self._reload()
 
     def _clear(self) -> None:

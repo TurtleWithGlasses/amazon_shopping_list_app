@@ -1300,11 +1300,12 @@ class MainWindow(QMainWindow):
 
     def _open_cart(self) -> None:
         from ui.cart_dialog import CartDialog
-        self._cart_dialog = CartDialog(self)
+        self._cart_dialog = CartDialog(self, on_changed=self.reload)
         try:
             self._cart_dialog.exec()
         finally:
             self._cart_dialog = None
+        self.reload()  # reflect any products deleted from the cart
 
     def _refresh_cart_if_open(self) -> None:
         """If the cart is open, re-pull prices so a just-finished refresh shows

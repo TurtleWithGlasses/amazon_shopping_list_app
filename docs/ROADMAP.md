@@ -309,6 +309,9 @@ automatically. Group-level alerts can layer on later via Phase 33. **v0.17.1:**
 right-click a product in the group view → **Delete** removes it from the group
 (`remove_from_group`) and the main list (`delete_product`, soft — history kept);
 the view rebuilds and the main window refreshes via an `on_changed` callback.
+**v0.17.2:** the same right-click menu also offers **Move to group** (other
+groups + New group… — `remove_from_group` + `add_to_group`, product stays
+tracked) and **Add to cart** (immediate `add_to_cart`).
 
 ### Phase 35 — "Search on Google" (find it elsewhere)
 Per-product **"Search on Google…"** (right-click) opens a Google web search for
@@ -370,6 +373,9 @@ and shows a **▲/▼ delta** from the most recent refresh; products scraped wit
 a currency label are folded into the cart's single known currency so there's one
 combined total (only genuinely different currencies split). *(Single cart for
 now; cart-level target alerts via Phase 33 left as a future enhancement.)*
+**v0.17.2:** each cart row has a **Delete** button (besides **Remove**) that
+soft-deletes the product from the list and the cart (`delete_product` +
+`remove_from_cart`, history kept); the main window refreshes via `on_changed`.
 
 ### Phase 40 — In-app notifications center
 A **🔔 bell button** in the toolbar with an **unread badge** (e.g. `🔔 3`), so the

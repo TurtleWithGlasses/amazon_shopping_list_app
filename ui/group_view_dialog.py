@@ -1,5 +1,6 @@
 """Group comparison view (Phase 34): members side by side + combined price graph."""
 from datetime import datetime, timedelta, timezone
+from functools import partial
 
 import pyqtgraph as pg
 from PySide6.QtCore import Qt, QUrl
@@ -8,6 +9,7 @@ from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QMenu,
     QMessageBox,
@@ -70,7 +72,7 @@ class GroupViewDialog(QDialog):
 
         self._layout.addWidget(QLabel(
             f"<b>{self.group_name}</b> — {len(members)} product(s); cheapest first, "
-            "highlighted in green. Click a name to open it; right-click to delete."
+            "highlighted in green. Click a name to open it; right-click to move or delete."
         ))
 
         splitter = QSplitter(Qt.Orientation.Vertical)
@@ -157,8 +159,37 @@ class GroupViewDialog(QDialog):
             return
         product = self.members[row]
         menu = QMenu(self)
+
+        # Move to another group (or a new one).
+        move_menu = menu.addMenu("Move to group")
+        others = [g for g in repo.list_groups() if g.id != self.group_id]
+        for group in others:
+            move_menu.addAction(group.name, partial(self._move, product, group.id))
+        if others:
+            move_menu.addSeparator()
+        move_menu.addAction("New group…", partial(self._move_to_new, product))
+
+        menu.addAction("Add to cart", partial(self._add_to_cart, product))
+        menu.addSeparator()
         menu.addAction("Delete", lambda: self._delete(product))
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _add_to_cart(self, product) -> None:
+        """Add the product to the shopping cart immediately (no-op if already in)."""
+        repo.add_to_cart(product.id)
+
+    def _move(self, product, target_group_id) -> None:
+        """Move a product out of this group and into another (the product stays
+        tracked; only its group membership changes)."""
+        repo.remove_from_group(self.group_id, product.id)
+        repo.add_to_group(target_group_id, product.id)  # no-op if already a member
+        self._populate()  # this group loses the product; the main list is unchanged
+
+    def _move_to_new(self, product) -> None:
+        name, ok = QInputDialog.getText(self, "New group", "Group name:")
+        if ok and name.strip():
+            group = repo.create_group(name.strip())
+            self._move(product, group.id)
 
     def _delete(self, product) -> None:
         confirm = QMessageBox.question(
