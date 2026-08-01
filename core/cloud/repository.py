@@ -243,10 +243,15 @@ def update_product(product_id, name=None, url=None, target_price=_UNSET) -> Opti
 
 @_resilient
 def delete_product(product_id) -> bool:
-    """Soft delete: keep the row + price history so re-adding revives it."""
-    rows = get_client().table("products").update(
+    """Soft delete: keep the row + price history so re-adding revives it. Also
+    drop it from the cart and any groups (current collections, not history)."""
+    client = get_client()
+    rows = client.table("products").update(
         {"deleted_at": _now_iso()}
     ).eq("id", product_id).execute().data
+    if rows:
+        client.table("cart_items").delete().eq("product_id", product_id).execute()
+        client.table("group_members").delete().eq("product_id", product_id).execute()
     return bool(rows)
 
 
@@ -481,10 +486,17 @@ def cart_products() -> List[CloudProduct]:
 
 @_resilient
 def cart_product_ids() -> set:
-    rows = get_client().table("cart_items").select("product_id").execute().data
-    return {r["product_id"] for r in rows}
+    client = get_client()
+    rows = client.table("cart_items").select("product_id").execute().data
+    ids = [r["product_id"] for r in rows]
+    if not ids:
+        return set()
+    # Only count products that still exist (not soft-deleted).
+    active = (client.table("products").select("id").in_("id", ids)
+              .is_("deleted_at", "null").execute().data)
+    return {r["id"] for r in active}
 
 
 @_resilient
 def cart_count() -> int:
-    return get_client().table("cart_items").select("id", count="exact").execute().count or 0
+    return len(cart_product_ids())

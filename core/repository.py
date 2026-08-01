@@ -7,7 +7,7 @@ from datetime import datetime
 from typing import List, Optional
 from urllib.parse import urlparse
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, select
 
 from .currency import normalize_currency
 from .db import session_scope
@@ -151,12 +151,15 @@ def update_product(
 
 def delete_product(product_id: int) -> bool:
     """Soft delete: hide the product but keep its row + price history, so re-adding
-    the same URL later revives it (see add_product)."""
+    the same URL later revives it (see add_product). Also drop it from the cart
+    and any groups — those are current collections, not history."""
     with session_scope() as session:
         product = session.get(Product, product_id)
         if product is None:
             return False
         product.deleted_at = utcnow()
+        session.execute(delete(CartItem).where(CartItem.product_id == product_id))
+        session.execute(delete(GroupMember).where(GroupMember.product_id == product_id))
         return True
 
 
@@ -399,12 +402,22 @@ def cart_products() -> List[Product]:
 
 
 def cart_product_ids() -> set:
-    """Set of product ids currently in the cart (for menu state)."""
+    """Set of product ids currently in the cart (active products only)."""
     with session_scope() as session:
-        return set(session.scalars(select(CartItem.product_id)))
+        stmt = (
+            select(CartItem.product_id)
+            .join(Product, Product.id == CartItem.product_id)
+            .where(Product.deleted_at.is_(None))
+        )
+        return set(session.scalars(stmt))
 
 
 def cart_count() -> int:
-    """Number of distinct products in the cart."""
+    """Number of distinct active products in the cart (ignores soft-deleted)."""
     with session_scope() as session:
-        return session.scalar(select(func.count()).select_from(CartItem)) or 0
+        stmt = (
+            select(func.count(CartItem.id))
+            .join(Product, Product.id == CartItem.product_id)
+            .where(Product.deleted_at.is_(None))
+        )
+        return session.scalar(stmt) or 0

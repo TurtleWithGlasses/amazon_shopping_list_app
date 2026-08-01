@@ -169,10 +169,17 @@ class GroupViewDialog(QDialog):
             move_menu.addSeparator()
         move_menu.addAction("New group…", partial(self._move_to_new, product))
 
+        menu.addAction("Remove from group", partial(self._remove_from_group, product))
         menu.addAction("Add to cart", partial(self._add_to_cart, product))
         menu.addSeparator()
         menu.addAction("Delete", lambda: self._delete(product))
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _remove_from_group(self, product) -> None:
+        """Take the product out of this group only (it stays tracked, in the main
+        list, in any other groups, and in the cart)."""
+        repo.remove_from_group(self.group_id, product.id)
+        self._populate()  # rebuild without the product
 
     def _add_to_cart(self, product) -> None:
         """Add the product to the shopping cart immediately (no-op if already in)."""
