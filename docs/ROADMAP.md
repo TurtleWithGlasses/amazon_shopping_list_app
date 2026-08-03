@@ -460,6 +460,9 @@ same confirm + soft delete — the graph still works afterward since history is
 kept). Older entries without an `id`/`url` degrade to plain text (no link/menu).
 **v0.17.1:** the Change cell is colored by price direction (rose → red, fell →
 green, keyed off the ▲/▼ already in the text, so it colors old entries too).
+**v0.17.4:** the right-click menu also offers **Add to group** (submenu of groups
+the product isn't already in + New group…) and **Add to cart** — the dialog calls
+`repo` directly, so no extra callbacks — to act on a well-priced item on the spot.
 
 ---
 

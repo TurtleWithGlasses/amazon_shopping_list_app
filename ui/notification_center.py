@@ -5,12 +5,15 @@ product's url / id) and callbacks. Clicking a product opens its link; right-clic
 offers Graph / Delete, wired to the main window's handlers. Newest first. Columns
 are user-resizable, and the window size + column widths persist across opens.
 """
+from functools import partial
+
 from PySide6.QtCore import QSettings, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QDialog,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QMenu,
     QMessageBox,
@@ -20,6 +23,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
+from core import datastore as repo
 from ui.theme import link_color
 
 _GEOMETRY_KEY = "notif_center/geometry"
@@ -132,12 +136,36 @@ class NotificationCenterDialog(QDialog):
         if product_id is None:  # older notifications have no product reference
             return
         menu = QMenu(self)
+
+        # Add to a group (skip ones the product is already in) or a new group.
+        current = {g.id for g in repo.groups_for_product(product_id)}
+        add_menu = menu.addMenu("Add to group")
+        for group in repo.list_groups():
+            if group.id not in current:
+                add_menu.addAction(group.name, partial(self._add_to_group, group.id, product_id))
+        if add_menu.actions():
+            add_menu.addSeparator()
+        add_menu.addAction("New group…", partial(self._add_to_new_group, product_id))
+
+        menu.addAction("Add to cart", partial(self._add_to_cart, product_id))
+        menu.addSeparator()
         if self._on_graph is not None:
             menu.addAction("Graph", lambda: self._on_graph(product_id))
         if self._on_delete is not None:
             menu.addAction("Delete", lambda: self._on_delete(product_id))
-        if menu.actions():
-            menu.exec(self.table.viewport().mapToGlobal(pos))
+        menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _add_to_group(self, group_id, product_id) -> None:
+        repo.add_to_group(group_id, product_id)
+
+    def _add_to_new_group(self, product_id) -> None:
+        name, ok = QInputDialog.getText(self, "New group", "Group name:")
+        if ok and name.strip():
+            group = repo.create_group(name.strip())
+            repo.add_to_group(group.id, product_id)
+
+    def _add_to_cart(self, product_id) -> None:
+        repo.add_to_cart(product_id)
 
     # --- persistence -------------------------------------------------------
 
