@@ -40,19 +40,22 @@ _PRICE_DOWN_COLOR = QColor("#2e9e44")  # price fell → green
 
 
 class NotificationCenterDialog(QDialog):
-    def __init__(self, rows, on_clear, on_open=None, on_graph=None, on_delete=None, parent=None):
+    def __init__(self, rows, on_clear, on_open=None, on_graph=None, on_delete=None,
+                 on_refresh=None, on_edit=None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Notifications")
         self._on_clear = on_clear
         self._on_open = on_open
         self._on_graph = on_graph
         self._on_delete = on_delete
+        self._on_refresh = on_refresh
+        self._on_edit = on_edit
 
         layout = QVBoxLayout(self)
         if rows:
             layout.addWidget(QLabel(
                 f"{len(rows)} recent change(s), newest first — click a product to "
-                "open it, right-click for graph / delete:"
+                "open it, right-click for actions:"
             ))
         else:
             layout.addWidget(QLabel(
@@ -149,9 +152,14 @@ class NotificationCenterDialog(QDialog):
 
         menu.addAction("Add to cart", partial(self._add_to_cart, product_id))
         menu.addSeparator()
+        if self._on_refresh is not None:
+            menu.addAction("Refresh", lambda: self._on_refresh(product_id))
+        if self._on_edit is not None:
+            menu.addAction("Edit", lambda: self._on_edit(product_id))
         if self._on_graph is not None:
             menu.addAction("Graph", lambda: self._on_graph(product_id))
         if self._on_delete is not None:
+            menu.addSeparator()
             menu.addAction("Delete", lambda: self._on_delete(product_id))
         menu.exec(self.table.viewport().mapToGlobal(pos))
 

@@ -463,6 +463,9 @@ green, keyed off the ▲/▼ already in the text, so it colors old entries too).
 **v0.17.4:** the right-click menu also offers **Add to group** (submenu of groups
 the product isn't already in + New group…) and **Add to cart** — the dialog calls
 `repo` directly, so no extra callbacks — to act on a well-priced item on the spot.
+**v0.17.5:** adds **Refresh** and **Edit** to the same menu (wired to the main
+window's `_refresh_one` / `_edit_product`), so a notification row exposes the full
+set of product actions.
 
 ---
 

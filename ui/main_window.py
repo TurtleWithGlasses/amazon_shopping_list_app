@@ -968,6 +968,8 @@ class MainWindow(QMainWindow):
             on_open=lambda url: QDesktopServices.openUrl(QUrl(url)),
             on_graph=self._show_graph,
             on_delete=self._delete_product,
+            on_refresh=self._refresh_one,
+            on_edit=self._edit_product,
             parent=self,
         ).exec()
         self._notif_log.mark_all_read()  # opening = seen
