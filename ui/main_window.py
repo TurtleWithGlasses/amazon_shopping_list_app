@@ -136,6 +136,7 @@ class MainWindow(QMainWindow):
         self._refresh_events = []  # detailed change records (notification + report)
         self._target_hits = []     # products whose price hit the target this batch
         self._cart_dialog = None   # open cart, so a refresh can update it live
+        self._group_dialog = None  # open group view, so a refresh can update it live
         self._notif_log = NotificationLog(notifications_path())  # in-app bell history
 
         self._build_menu()
@@ -674,7 +675,8 @@ class MainWindow(QMainWindow):
         # and focus stay put, then set the indicator.
         self._recompute_trends()  # this product gained a history point
         self._update_row(product_id)
-        self._refresh_cart_if_open()  # reflect the new price in an open cart
+        self._refresh_cart_if_open()   # reflect the new price in an open cart
+        self._refresh_group_if_open()  # …and in an open group view
         if ok:
             self._set_row_status(product_id, "ok")
             self.statusBar().showMessage("Refresh complete")
@@ -876,7 +878,8 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(True)
         self._recompute_trends()  # new history points may change the trends
         self.reload()
-        self._refresh_cart_if_open()  # reflect new prices in an open cart
+        self._refresh_cart_if_open()   # reflect new prices in an open cart
+        self._refresh_group_if_open()  # …and in an open group view
 
         total = len(self._refresh_events)
         if self._refresh_notify and self._refresh_events:
@@ -1282,8 +1285,21 @@ class MainWindow(QMainWindow):
 
     def _open_group(self, group_id, group_name) -> None:
         from ui.group_view_dialog import GroupViewDialog
-        GroupViewDialog(group_id, group_name, parent=self, on_changed=self.reload).exec()
+        self._group_dialog = GroupViewDialog(
+            group_id, group_name, parent=self,
+            on_changed=self.reload, on_refresh=self._refresh_one,
+        )
+        try:
+            self._group_dialog.exec()
+        finally:
+            self._group_dialog = None
         self.reload()  # reflect any deletions made in the group view
+
+    def _refresh_group_if_open(self) -> None:
+        """If a group view is open, rebuild it so a just-finished refresh shows."""
+        dialog = self._group_dialog
+        if dialog is not None and dialog.isVisible():
+            dialog.reload_view()
 
     def _open_groups(self) -> None:
         from ui.groups_dialog import GroupsDialog
@@ -1302,7 +1318,7 @@ class MainWindow(QMainWindow):
 
     def _open_cart(self) -> None:
         from ui.cart_dialog import CartDialog
-        self._cart_dialog = CartDialog(self, on_changed=self.reload)
+        self._cart_dialog = CartDialog(self, on_changed=self.reload, on_refresh=self._refresh_one)
         try:
             self._cart_dialog.exec()
         finally:

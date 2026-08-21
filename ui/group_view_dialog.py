@@ -36,14 +36,20 @@ def _site_name(url: str) -> str:
 
 
 class GroupViewDialog(QDialog):
-    def __init__(self, group_id: int, group_name: str, parent=None, on_changed=None):
+    def __init__(self, group_id: int, group_name: str, parent=None, on_changed=None,
+                 on_refresh=None):
         super().__init__(parent)
         self.group_id = group_id
         self.group_name = group_name
         self._on_changed = on_changed  # called after a delete so the caller refreshes
+        self._on_refresh = on_refresh  # re-scrape one product (main window handler)
         self.setWindowTitle(f"Group — {group_name}")
         self.resize(860, 680)
         self._layout = QVBoxLayout(self)
+        self._populate()
+
+    def reload_view(self) -> None:
+        """Public hook: rebuild the table + graph (e.g. after a refresh lands)."""
         self._populate()
 
     def _populate(self) -> None:
@@ -171,9 +177,16 @@ class GroupViewDialog(QDialog):
 
         menu.addAction("Remove from group", partial(self._remove_from_group, product))
         menu.addAction("Add to cart", partial(self._add_to_cart, product))
+        if self._on_refresh is not None:
+            menu.addAction("Refresh", partial(self._refresh, product))
         menu.addSeparator()
         menu.addAction("Delete", lambda: self._delete(product))
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _refresh(self, product) -> None:
+        """Re-scrape one product via the main window; when it finishes, the main
+        window rebuilds this view (reload_view) so the new price shows here."""
+        self._on_refresh(product.id)
 
     def _remove_from_group(self, product) -> None:
         """Take the product out of this group only (it stays tracked, in the main

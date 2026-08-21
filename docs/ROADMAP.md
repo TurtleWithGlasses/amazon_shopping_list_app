@@ -313,6 +313,9 @@ the view rebuilds and the main window refreshes via an `on_changed` callback.
 groups + New group… — `remove_from_group` + `add_to_group`, product stays
 tracked) and **Add to cart** (immediate `add_to_cart`). **v0.17.3:** adds
 **Remove from group** (this group only; product stays tracked everywhere else).
+**v0.17.6:** adds **Refresh** (re-scrape via `_refresh_one`); the main window
+rebuilds the open group view (`reload_view` hooked into the refresh-completion
+paths) so the new price / low / ordering / graph update in place.
 
 ### Phase 35 — "Search on Google" (find it elsewhere)
 Per-product **"Search on Google…"** (right-click) opens a Google web search for
@@ -380,7 +383,9 @@ soft-deletes the product from the list and the cart (`delete_product` +
 **v0.17.3:** `delete_product` now also drops the product from the cart + all
 groups (they're current collections, not history), and `cart_count()` /
 `cart_product_ids()` (and group member counts) ignore soft-deleted products — so
-the cart badge can't show a phantom count for a deleted item.
+the cart badge can't show a phantom count for a deleted item. **v0.17.6:** each
+cart row also has a **Refresh** button (`on_refresh` → `_refresh_one`); the price
+updates in place via the existing `reload_prices` hook when the scrape lands.
 
 ### Phase 40 — In-app notifications center
 A **🔔 bell button** in the toolbar with an **unread badge** (e.g. `🔔 3`), so the
