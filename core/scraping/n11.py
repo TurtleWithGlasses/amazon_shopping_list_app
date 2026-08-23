@@ -20,12 +20,16 @@ _TITLE_CSS = ", ".join(_TITLE_SELECTORS)
 # "priceFloat":<selling price>. The "displayPriceFloat" key (old/list price)
 # does not match this pattern, so the first hit is the main product's price.
 _PRICE_FLOAT_RE = re.compile(r'"priceFloat"\s*:\s*([0-9]+(?:\.[0-9]+)?)')
+# Scoped to the MAIN product's price box first — recommended-product carousels on
+# the same page also use `.newPrice`, so an unscoped match can grab their price.
 _PRICE_SELECTORS = [
+    ".pdpMainInfo .price-wrapper .newPrice ins",
+    ".product-summary .price-wrapper .newPrice ins",
+    ".pdpMainInfo .newPrice ins",
+    ".price-wrapper .newPrice ins",
     ".newPrice ins",
-    ".priceContainer .newPrice",
     "ins.newPrice",
-    ".price-wrapper ins",
-    ".newPrice",
+    ".priceContainer .newPrice",
 ]
 _IMAGE_SELECTORS = [
     ".imageSlider .swiper-slide-active img",
@@ -72,11 +76,8 @@ class N11Adapter(RetailerAdapter):
 
     @staticmethod
     def _extract_price(html, soup) -> Tuple[Optional[float], str]:
-        # Primary: the selling price embedded in the page's JS state.
-        match = _PRICE_FLOAT_RE.search(html)
-        if match:
-            return float(match.group(1)), "TL"
-        # Fallback: rendered DOM (works if the price XHR completed).
+        # 1) Rendered DOM, scoped to the MAIN product's price box (Selenium path).
+        #    This is the definitive selling price shown to the user.
         for sel in _PRICE_SELECTORS:
             el = soup.select_one(sel)
             if not el:
@@ -86,13 +87,21 @@ class N11Adapter(RetailerAdapter):
             if price is not None:
                 currency = re.sub(r"[\d\s.,]", "", text).strip() or "TL"
                 return price, currency
-        # Last resort: structured data (JSON-LD / Open Graph).
-        data = GenericAdapter._from_jsonld(soup)
-        if data.get("price") is not None:
-            return data["price"], data.get("currency") or "TL"
+        # 2) SEO structured data for the main product — a single, reliable value
+        #    present even in the initial HTML (fast path), unlike the JS state.
         og = GenericAdapter._from_opengraph(soup)
         if og.get("price") is not None:
             return og["price"], og.get("currency") or "TL"
+        data = GenericAdapter._from_jsonld(soup)
+        if data.get("price") is not None:
+            return data["price"], data.get("currency") or "TL"
+        # 3) Last resort: the first "priceFloat" in the embedded JS state. This can
+        #    be a RECOMMENDED product's price (the page has many), so it's used only
+        #    when nothing above matched; the price guard in the UI holds any
+        #    implausible jump until a second scan confirms it.
+        match = _PRICE_FLOAT_RE.search(html)
+        if match:
+            return float(match.group(1)), "TL"
         return None, ""
 
     @staticmethod

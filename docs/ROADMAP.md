@@ -494,6 +494,16 @@ sites, so revisit only if browser-fallback sites come to dominate a refresh.
   so scrapers and core logic can change safely as the app grows.
 - **Dedicated adapters** for Teknosa / Vatan / Media Markt / Trendyol (currently
   scraped via the generic adapter, which may misread price/stock).
+- **Transient price spikes (v0.17.7 fix):** adapters could grab a *recommended*
+  product's price (N11's `priceFloat` first-match; the generic adapter's first
+  `@type:Product` node), producing one-off spikes in history that self-correct on
+  the next scan. Fixed at the source for **N11** — `_extract_price` now prefers
+  the scoped main-product DOM (`.pdpMainInfo … .newPrice ins`) + OG/JSON-LD over
+  the `priceFloat` regex. Backstopped everywhere by a **save-time guard**
+  (`main_window._guard_price`, `SUSPECT_JUMP_FACTOR`): a ≥2.5× jump is held until
+  a second consecutive scan confirms it, so a bad read never enters history.
+  *Still to root-cause: the generic/Trendyol first-Product-node pick (needs a
+  saved HTML of a spiking page); the guard protects it meanwhile.*
 - **Amazon currency sometimes blank**: some amazon.com.tr listings are stored
   with an empty `currency`, so prices show without a "TL" suffix. The cart works
   around it (folds blank into the single known currency), but the Amazon adapter

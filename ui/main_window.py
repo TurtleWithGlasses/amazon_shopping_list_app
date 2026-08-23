@@ -94,6 +94,11 @@ REFRESH_INTERVAL_OPTIONS = [
 ]
 SNAPSHOT_INTERVAL_MS = int(os.environ.get("PRICETRACKER_SNAPSHOT_MS", 60 * 60 * 1000))   # 1 hour
 
+# A scraped price that jumps by at least this factor (up or down) vs. the last
+# known price is treated as suspect (often a recommended product's price picked
+# up by mistake) and held until a second consecutive scan confirms it.
+SUSPECT_JUMP_FACTOR = 2.5
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -137,6 +142,7 @@ class MainWindow(QMainWindow):
         self._target_hits = []     # products whose price hit the target this batch
         self._cart_dialog = None   # open cart, so a refresh can update it live
         self._group_dialog = None  # open group view, so a refresh can update it live
+        self._pending_price = {}   # product id -> a suspicious price awaiting confirmation
         self._notif_log = NotificationLog(notifications_path())  # in-app bell history
 
         self._build_menu()
@@ -747,6 +753,39 @@ class MainWindow(QMainWindow):
         if self._pending_refresh <= 0:
             self._finalize_refresh()
 
+    def _guard_price(self, product_id, price):
+        """Hold a suspicious price jump until a second consecutive scan confirms
+        it, so a one-off bad scrape (e.g. a recommended product's price picked up
+        by mistake) never gets written to history. Returns the price to save, or
+        None to keep the last known price."""
+        if price is None:
+            return None
+        current = repo.get_product(product_id)
+        old = current.last_price if current is not None else None
+        if not self._is_suspicious_jump(old, price):
+            self._pending_price.pop(product_id, None)
+            return price
+        pending = self._pending_price.get(product_id)
+        if pending is not None and self._prices_close(pending, price):
+            self._pending_price.pop(product_id, None)  # a 2nd scan confirms it → accept
+            return price
+        self._pending_price[product_id] = price         # first sighting → hold it back
+        return None
+
+    @staticmethod
+    def _is_suspicious_jump(old, new) -> bool:
+        if old is None or new is None or old <= 0 or new <= 0:
+            return False
+        ratio = new / old if new >= old else old / new
+        return ratio >= SUSPECT_JUMP_FACTOR
+
+    @staticmethod
+    def _prices_close(a, b) -> bool:
+        if a is None or b is None:
+            return False
+        hi = max(abs(a), abs(b)) or 1.0
+        return abs(a - b) / hi <= 0.10
+
     def _persist_scrape(self, product_id, data, *, snapshot: bool):
         """Apply one scrape result to the store and log history when warranted.
 
@@ -754,10 +793,11 @@ class MainWindow(QMainWindow):
         ``(product, changed, back_in_stock, target_hit)`` or ``(None, False,
         False, False)``.
         """
+        price = self._guard_price(product_id, data.price)
         product = repo.apply_scrape_result(
             product_id,
             name=data.name,
-            price=data.price,
+            price=price,
             currency=data.currency,
             stock=data.stock,
             image_url=data.image_url,
