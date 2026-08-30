@@ -504,6 +504,12 @@ sites, so revisit only if browser-fallback sites come to dominate a refresh.
   a second consecutive scan confirms it, so a bad read never enters history.
   *Still to root-cause: the generic/Trendyol first-Product-node pick (needs a
   saved HTML of a spiking page); the guard protects it meanwhile.*
+- **Cloud graph truncation (v0.17.8 fix):** cloud `get_price_history` had no
+  pagination, so PostgREST's 1000-row default cap returned only the OLDEST 1000
+  points — products with a long history showed a graph that stopped in the past
+  and never displayed recent prices (manual refreshes saved but weren't shown).
+  Fixed by paginating it in 1000-row chunks (same as `recent_history`). Prices
+  were always stored; only the read was capped. Local/SQLite was unaffected.
 - **Amazon currency sometimes blank**: some amazon.com.tr listings are stored
   with an empty `currency`, so prices show without a "TL" suffix. The cart works
   around it (folds blank into the single known currency), but the Amazon adapter

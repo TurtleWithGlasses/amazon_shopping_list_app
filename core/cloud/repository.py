@@ -301,11 +301,23 @@ def record_price_snapshot(product_id, price=None, stock=None) -> Optional[CloudH
 
 @_resilient
 def get_price_history(product_id, since=None) -> List[CloudHistory]:
-    query = get_client().table("price_history").select("*").eq("product_id", product_id)
-    if since is not None:
-        query = query.gte("captured_at", since.isoformat())
-    rows = query.order("captured_at").execute().data
-    return [_to_history(r) for r in rows]
+    """One product's history, oldest first. Paginated because Supabase caps a
+    single response at 1000 rows — a long history (hourly snapshots over months)
+    exceeds that, which would otherwise return only the OLDEST 1000 points and
+    drop every recent price from the graph."""
+    client = get_client()
+    result: List[CloudHistory] = []
+    size, start = 1000, 0
+    while True:
+        query = client.table("price_history").select("*").eq("product_id", product_id)
+        if since is not None:
+            query = query.gte("captured_at", since.isoformat())
+        rows = query.order("captured_at").range(start, start + size - 1).execute().data
+        result.extend(_to_history(r) for r in rows)
+        if len(rows) < size:
+            break
+        start += size
+    return result
 
 
 @_resilient
