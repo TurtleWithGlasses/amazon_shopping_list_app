@@ -472,11 +472,26 @@ the product isn't already in + New group…) and **Add to cart** — the dialog 
 window's `_refresh_one` / `_edit_product`), so a notification row exposes the full
 set of product actions.
 
+### Phase 45 — Persistent scrape status (v0.18.0)
+The **Status** column showed a ✓/✗ only *during* a refresh — it was transient UI
+state, so it was empty on startup and the batch `_finalize_refresh` `reload()`
+wiped it. Now the last-scrape outcome is **stored** per product (new
+`last_scrape_ok` bool + `last_error` text; both backends, local migration +
+`alter table … add column` for cloud): `apply_scrape_result` records success,
+`set_scrape_status` records failure, and `_render_persisted_status` draws the
+✓/✗ (with the error as tooltip) in `_append_row`, so it's populated on load and
+survives every reload — for both "Refresh All" and per-row Refresh.
+Also **cloud resilience (v0.18.0):** `_resilient` now retries transient gateway/
+timeout/rate-limit responses (429/500/502/503/504/52x), not just dropped
+connections — a 504 comes back as an `APIError`, not a `TransportError` — while
+re-raising genuine client errors immediately; `_add_product` degrades to a
+"connection problem" message instead of crashing if the server stays unreachable.
+
 ---
 
 ## Upcoming
 
-No numbered phases queued — the planned set (through Phase 44) is shipped.
+No numbered phases queued — the planned set (through Phase 45) is shipped.
 Candidate next work lives under **Known follow-ups / tech debt** below.
 
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome

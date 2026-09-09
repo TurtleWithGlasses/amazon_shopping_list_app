@@ -50,6 +50,10 @@ def _migrate(engine: Engine) -> None:
         existing = {row[1] for row in conn.execute(text("PRAGMA table_info(products)"))}
         if "deleted_at" not in existing:
             conn.execute(text("ALTER TABLE products ADD COLUMN deleted_at DATETIME"))
+        if "last_scrape_ok" not in existing:
+            conn.execute(text("ALTER TABLE products ADD COLUMN last_scrape_ok BOOLEAN"))
+        if "last_error" not in existing:
+            conn.execute(text("ALTER TABLE products ADD COLUMN last_error VARCHAR"))
 
 
 @contextmanager

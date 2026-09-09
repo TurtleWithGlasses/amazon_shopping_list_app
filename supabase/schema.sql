@@ -20,7 +20,9 @@ create table if not exists public.products (
     created_at      timestamptz not null default now(),
     last_checked    timestamptz,
     target_price    double precision,
-    deleted_at      timestamptz
+    deleted_at      timestamptz,
+    last_scrape_ok  boolean,
+    last_error      text
 );
 create index if not exists products_user_idx on public.products (user_id);
 
@@ -33,6 +35,9 @@ alter table public.products add column if not exists target_price double precisi
 -- Soft delete: removed products are hidden (deleted_at set) so re-adding the same
 -- URL revives them with their price history (Phase 43).
 alter table public.products add column if not exists deleted_at timestamptz;
+-- Last-scrape outcome for the Status column (Phase 45).
+alter table public.products add column if not exists last_scrape_ok boolean;
+alter table public.products add column if not exists last_error text;
 
 create table if not exists public.price_history (
     id            bigint generated always as identity primary key,

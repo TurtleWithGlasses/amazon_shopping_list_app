@@ -467,6 +467,7 @@ class MainWindow(QMainWindow):
         status_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setCellWidget(row, COL_STATUS, status_label)
         self._status_cells[product.id] = status_label
+        self._render_persisted_status(product)  # ✓/✗ from the last scrape
 
         self.table.setCellWidget(row, COL_ACTIONS, self._action_buttons(product.id))
 
@@ -502,6 +503,24 @@ class MainWindow(QMainWindow):
         target = product.target_price
         return bool(product.price_changed and product.prev_price is not None
                     and product.prev_price > target)
+
+    def _record_scrape_error(self, product_id, message) -> None:
+        """Persist a failed scrape (so the ✗ survives reload) and show it now."""
+        try:
+            repo.set_scrape_status(product_id, False, message)
+        except Exception:
+            pass  # a write blip must not break the refresh loop
+        self._set_row_status(product_id, "error", message)
+
+    def _render_persisted_status(self, product) -> None:
+        """Show the stored last-scrape outcome (✓/✗) so the Status column is
+        populated on load and survives a reload, not only during a live refresh."""
+        ok = getattr(product, "last_scrape_ok", None)
+        if ok is True:
+            self._set_row_status(product.id, "ok")
+        elif ok is False:
+            self._set_row_status(product.id, "error", getattr(product, "last_error", None) or None)
+        # None (never scraped) → leave the cell idle/empty.
 
     def _set_row_status(self, product_id, state: str, tooltip: str = None) -> None:
         """Update a row's fetch indicator (idle/refreshing/ok/error)."""
@@ -614,7 +633,18 @@ class MainWindow(QMainWindow):
         adapter = get_adapter(url)
         normalized = adapter.normalize_url(url) if adapter else url
         target = self._canonical_url(normalized)
-        if any(self._canonical_url(p.url) == target for p in repo.list_products()):
+        try:
+            existing = repo.list_products()
+        except Exception as exc:
+            QMessageBox.warning(
+                self, "Connection problem",
+                "Couldn't reach the server to check your list just now.\n"
+                "Please try again in a moment.\n\n"
+                f"({exc})",
+            )
+            self.statusBar().showMessage("Add failed — connection problem")
+            return
+        if any(self._canonical_url(p.url) == target for p in existing):
             QMessageBox.warning(
                 self, "Already on your list",
                 "The product you are trying to add already exists on your list.",
@@ -690,7 +720,7 @@ class MainWindow(QMainWindow):
                 self._notify_target_hits([hit])
             self._log_notifications(events, [hit] if hit is not None else [])
         else:
-            self._set_row_status(product_id, "error", message)
+            self._record_scrape_error(product_id, message)
             self.statusBar().showMessage(f"Refresh failed: {message}")
 
     def _auto_refresh(self) -> None:
@@ -739,14 +769,14 @@ class MainWindow(QMainWindow):
     def _on_refreshed(self, product_id, data) -> None:
         if data.ok:
             try:
-                self._apply_refresh_result(product_id, data)
+                self._apply_refresh_result(product_id, data)  # persists last_scrape_ok=True
                 self._set_row_status(product_id, "ok")
             except Exception as exc:
                 # A network/DB blip on one product must not break the batch.
-                self._set_row_status(product_id, "error", str(exc))
+                self._record_scrape_error(product_id, str(exc))
                 self.statusBar().showMessage(f"Could not save update: {exc}")
         else:
-            self._set_row_status(product_id, "error", data.error or "Scrape failed")
+            self._record_scrape_error(product_id, data.error or "Scrape failed")
         self._pending_refresh -= 1
         done = self._refresh_total - self._pending_refresh
         self.statusBar().showMessage(f"Refreshing {done}/{self._refresh_total}…")

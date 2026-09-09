@@ -20,21 +20,46 @@ from .auth import current_user_id
 from .client import get_client
 
 
-def _resilient(func):
-    """Retry a Supabase call on transient network errors.
+# HTTP statuses worth retrying: the server/gateway is momentarily unavailable or
+# rate-limiting, not a client mistake. 5xx incl. Cloudflare 52x, plus 429.
+_TRANSIENT_STATUSES = {429, 500, 502, 503, 504, 520, 521, 522, 523, 524}
+_TRANSIENT_KEYWORDS = ("timeout", "gateway", "temporarily", "try again",
+                       "server disconnected", "connection")
+_RETRIES = 4
 
-    Supabase's HTTP/2 keep-alive connections can be dropped while idle
-    ("Server disconnected"); retrying issues a fresh request/connection.
-    """
+
+def _is_transient(exc: Exception) -> bool:
+    """True for errors that a retry might fix — dropped connections and gateway/
+    timeout/rate-limit responses — but NOT genuine client errors (4xx, RLS, etc.)."""
+    if isinstance(exc, httpx.TransportError):
+        return True
+    code = getattr(exc, "code", None)
+    try:
+        if int(code) in _TRANSIENT_STATUSES:
+            return True
+    except (TypeError, ValueError):
+        pass
+    message = (getattr(exc, "message", "") or str(exc)).lower()
+    return any(word in message for word in _TRANSIENT_KEYWORDS)
+
+
+def _resilient(func):
+    """Retry a Supabase call on transient errors: dropped HTTP/2 keep-alive
+    connections ("Server disconnected") and gateway/timeout/rate-limit responses
+    (e.g. a 504 Gateway Timeout comes back as an APIError, not a TransportError).
+    Genuine client errors are re-raised immediately."""
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         last_error = None
-        for attempt in range(3):
+        for attempt in range(_RETRIES):
             try:
                 return func(*args, **kwargs)
-            except httpx.TransportError as exc:
+            except Exception as exc:
+                if not _is_transient(exc):
+                    raise
                 last_error = exc
-                time.sleep(0.4 * (attempt + 1))
+                if attempt + 1 < _RETRIES:
+                    time.sleep(0.5 * (attempt + 1))  # 0.5s, 1s, 1.5s backoff
         raise last_error
     return wrapper
 
@@ -58,6 +83,8 @@ class CloudProduct:
     last_checked: Optional[datetime]
     target_price: Optional[float] = None
     deleted_at: Optional[datetime] = None
+    last_scrape_ok: Optional[bool] = None
+    last_error: Optional[str] = None
 
 
 @dataclass
@@ -120,6 +147,8 @@ def _to_product(row: dict) -> CloudProduct:
         last_checked=_parse_dt(row.get("last_checked")),
         target_price=row.get("target_price"),
         deleted_at=_parse_dt(row.get("deleted_at")),
+        last_scrape_ok=row.get("last_scrape_ok"),
+        last_error=row.get("last_error"),
     )
 
 
@@ -286,9 +315,19 @@ def apply_scrape_result(product_id, name=None, price=None, currency=None,
         updates["last_stock"] = stock
     if image_url:
         updates["image_url"] = image_url
+    updates["last_scrape_ok"] = True   # reaching here means the scrape succeeded
+    updates["last_error"] = None
 
     updated = client.table("products").update(updates).eq("id", product_id).execute().data
     return _to_product(updated[0]) if updated else None
+
+
+@_resilient
+def set_scrape_status(product_id, ok, error=None) -> Optional[CloudProduct]:
+    """Record the outcome of the last scrape (apply_scrape_result records success)."""
+    updates = {"last_scrape_ok": ok, "last_error": (error or None) if not ok else None}
+    rows = get_client().table("products").update(updates).eq("id", product_id).execute().data
+    return _to_product(rows[0]) if rows else None
 
 
 @_resilient

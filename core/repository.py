@@ -207,7 +207,21 @@ def apply_scrape_result(
         if image_url:
             product.image_url = image_url
         product.last_checked = utcnow()
+        product.last_scrape_ok = True   # reaching here means the scrape succeeded
+        product.last_error = None
 
+        return product
+
+
+def set_scrape_status(product_id: int, ok: bool, error: Optional[str] = None) -> Optional[Product]:
+    """Record the outcome of the last scrape (for the Status column). Called on a
+    failed scrape (apply_scrape_result already records success)."""
+    with session_scope() as session:
+        product = session.get(Product, product_id)
+        if product is None:
+            return None
+        product.last_scrape_ok = ok
+        product.last_error = (error or None) if not ok else None
         return product
 
 

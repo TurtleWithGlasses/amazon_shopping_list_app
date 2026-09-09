@@ -58,6 +58,11 @@ class Product(Base):
     # its price history survives and re-adding the same URL can revive it.
     deleted_at: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True, index=True)
 
+    # Outcome of the most recent scrape (for the Status column): True = ok,
+    # False = error, None = never scraped. last_error holds the failure reason.
+    last_scrape_ok: Mapped[Optional[bool]] = mapped_column(Boolean, nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(String, nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(DateTime, default=utcnow, nullable=False)
     last_checked: Mapped[Optional[datetime]] = mapped_column(DateTime, nullable=True)
 
