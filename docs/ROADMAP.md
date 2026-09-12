@@ -486,6 +486,13 @@ timeout/rate-limit responses (429/500/502/503/504/52x), not just dropped
 connections — a 504 comes back as an `APIError`, not a `TransportError` — while
 re-raising genuine client errors immediately; `_add_product` degrades to a
 "connection problem" message instead of crashing if the server stays unreachable.
+**v0.18.1 — refresh summary:** a batch now tracks its failures
+(`_refresh_failures`) and `_notify_refresh_summary` reports the outcome to
+notifications + Telegram — `x/y products were fetched.` followed by the failed
+products with their URLs (capped at 20, "…and N more") — and logs one
+`fetch_error` entry per failure to the bell, so each failed product is visible
+and actionable (right-click → Refresh). Sent only when something failed, so a
+fully-successful refresh doesn't ping every cycle.
 
 ---
 

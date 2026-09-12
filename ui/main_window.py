@@ -140,6 +140,7 @@ class MainWindow(QMainWindow):
         self._refresh_report = False  # open the changes report window on finalize
         self._refresh_events = []  # detailed change records (notification + report)
         self._target_hits = []     # products whose price hit the target this batch
+        self._refresh_failures = []  # (product_id, url, name, error) that failed this batch
         self._cart_dialog = None   # open cart, so a refresh can update it live
         self._group_dialog = None  # open group view, so a refresh can update it live
         self._pending_price = {}   # product id -> a suspicious price awaiting confirmation
@@ -746,6 +747,7 @@ class MainWindow(QMainWindow):
         self._refresh_report = report
         self._refresh_events = []
         self._target_hits = []
+        self._refresh_failures = []
         self._pending_refresh = len(products)
         self._refresh_total = len(products)
         self.refresh_button.setEnabled(False)
@@ -774,9 +776,12 @@ class MainWindow(QMainWindow):
             except Exception as exc:
                 # A network/DB blip on one product must not break the batch.
                 self._record_scrape_error(product_id, str(exc))
+                self._note_failure(product_id, data.url, str(exc))
                 self.statusBar().showMessage(f"Could not save update: {exc}")
         else:
-            self._record_scrape_error(product_id, data.error or "Scrape failed")
+            message = data.error or "Scrape failed"
+            self._record_scrape_error(product_id, message)
+            self._note_failure(product_id, data.url, message)
         self._pending_refresh -= 1
         done = self._refresh_total - self._pending_refresh
         self.statusBar().showMessage(f"Refreshing {done}/{self._refresh_total}…")
@@ -944,6 +949,60 @@ class MainWindow(QMainWindow):
             lines.append(f"• {prefix}{name}\n    {price}  (target {target})")
         self._notifications.notify("🎯 Target price reached", "\n".join(lines))
 
+    def _note_failure(self, product_id, url, error) -> None:
+        """Record a failed scrape for the end-of-batch summary."""
+        self._refresh_failures.append((product_id, url or "", self._row_name(product_id), error))
+
+    def _row_name(self, product_id) -> str:
+        """The product's display name from its table row (no extra DB read)."""
+        row = self._row_for_product.get(product_id)
+        if row is not None:
+            item = self.table.item(row, COL_NAME)
+            if item is not None:
+                return item.text()
+        return ""
+
+    def _refresh_summary_message(self, total, failures) -> str:
+        ok = max(0, total - len(failures))
+        lines = [f"{ok}/{total} products were fetched.", "", "Failed products:"]
+        for _pid, url, name, _err in failures[:20]:
+            lines.append(f"• {(name or url or 'Unknown')[:70]}")
+            if url:
+                lines.append(f"    {url}")
+        extra = len(failures) - 20
+        if extra > 0:
+            lines.append(f"…and {extra} more")
+        return "\n".join(lines)
+
+    def _log_fetch_failures(self, failures) -> None:
+        """Add each failed product to the in-app notifications center (bell)."""
+        entries = [{
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "product_id": pid,
+            "url": url or None,
+            "site": self._site_name(url or ""),
+            "name": name or url or "",
+            "detail": f"⚠️ Could not fetch — {err}",
+            "kind": "fetch_error",
+        } for pid, url, name, err in failures]
+        if entries:
+            self._notif_log.add(entries)
+            self._update_bell()
+
+    def _notify_refresh_summary(self) -> None:
+        """After a batch, report x/y fetched + the failed URLs to notifications /
+        Telegram (and log the failures to the bell). Only when something failed —
+        so a fully-successful refresh doesn't ping every cycle."""
+        failures = self._refresh_failures
+        if not failures:
+            return
+        if self._refresh_notify:
+            self._notifications.notify(
+                f"Refresh — {len(failures)} of {self._refresh_total} could not be fetched",
+                self._refresh_summary_message(self._refresh_total, failures),
+            )
+        self._log_fetch_failures(failures)
+
     def _finalize_refresh(self) -> None:
         self.refresh_button.setEnabled(True)
         self._recompute_trends()  # new history points may change the trends
@@ -956,6 +1015,7 @@ class MainWindow(QMainWindow):
             self._notifications.notify(self._refresh_title, self._changes_message())
         self._notify_target_hits(self._target_hits)
         self._log_notifications(self._refresh_events, self._target_hits)
+        self._notify_refresh_summary()  # x/y fetched + failed URLs (only if any failed)
         self.statusBar().showMessage(
             f"Refresh complete — {total} change(s) detected" if total else "Refresh complete"
         )
