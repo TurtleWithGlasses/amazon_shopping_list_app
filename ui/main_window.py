@@ -1,11 +1,14 @@
 """Main application window: product table, add/refresh, edit/delete, graph, export."""
 import os
+import threading
 from datetime import datetime, timedelta, timezone
 from functools import partial
 from urllib.parse import quote_plus, urlparse
 
 from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, QUrl
-from PySide6.QtGui import QAction, QActionGroup, QColor, QDesktopServices, QPalette
+from PySide6.QtGui import (
+    QAction, QActionGroup, QColor, QDesktopServices, QKeySequence, QPalette, QShortcut,
+)
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
@@ -37,6 +40,7 @@ from core.version import GITHUB_REPO, __version__
 from services import export as export_service
 from services.notification_log import NotificationLog
 from services.notifications import NotificationService
+from core.scraping.browser import CancelToken
 from services.scrape_worker import ScrapeTask
 from services.suggestions import complement_terms
 from services.trend import price_trend
@@ -99,6 +103,13 @@ SNAPSHOT_INTERVAL_MS = int(os.environ.get("PRICETRACKER_SNAPSHOT_MS", 60 * 60 * 
 # up by mistake) and held until a second consecutive scan confirms it.
 SUSPECT_JUMP_FACTOR = 2.5
 
+# Refresh All turns into this red Stop button while a refresh is running.
+_STOP_BUTTON_QSS = (
+    "QPushButton { background: #cc3b3b; color: #ffffff; border: none;"
+    " border-radius: 16px; padding: 8px 20px; font-weight: 600; }"
+    "QPushButton:hover { background: #b02f2f; }"
+)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -144,9 +155,15 @@ class MainWindow(QMainWindow):
         self._cart_dialog = None   # open cart, so a refresh can update it live
         self._group_dialog = None  # open group view, so a refresh can update it live
         self._pending_price = {}   # product id -> a suspicious price awaiting confirmation
+        # Stop support: every refresh scrape shares the current run's CancelToken;
+        # Stop cancels it and bumps the generation so late results are ignored.
+        self._cancel_token = None
+        self._refresh_gen = 0
+        self._tray_stop_action = None
         self._notif_log = NotificationLog(notifications_path())  # in-app bell history
 
         self._build_menu()
+        QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self._stop_refresh)  # Esc = Stop
         self._build_central()
         self._build_tray()
         self._restore_layout()
@@ -216,7 +233,7 @@ class MainWindow(QMainWindow):
         self.add_button.clicked.connect(self._add_product)
         self.refresh_button = QPushButton("Refresh All")
         self.refresh_button.setObjectName("primary")
-        self.refresh_button.clicked.connect(self._refresh_all)
+        self.refresh_button.clicked.connect(self._on_refresh_button)  # Refresh All ⇄ Stop
         self.interval_combo = QComboBox()
         for label, ms in REFRESH_INTERVAL_OPTIONS:
             self.interval_combo.addItem(label, ms)
@@ -653,7 +670,7 @@ class MainWindow(QMainWindow):
             return
         self.add_button.setEnabled(False)
         self.statusBar().showMessage("Fetching product…")
-        self._start_task(url, key="__add__", on_finished=self._on_added)
+        self._start_task(url, key="__add__", on_finished=self._on_added, cancellable=False)
 
     def _on_added(self, _key, data) -> None:
         self.add_button.setEnabled(True)
@@ -687,12 +704,14 @@ class MainWindow(QMainWindow):
         # focus elsewhere, scrolling the table away. Re-clicks are already blocked
         # by the _single_active gate above, and the "⟳" status shows it's busy.
         self._single_active.add(product_id)
+        self._update_refresh_ui()
         self._set_row_status(product_id, "refreshing")
         self.statusBar().showMessage(f"Refreshing {product.name or product.url}…")
         self._start_task(product.url, key=product_id, on_finished=self._on_one_refreshed)
 
     def _on_one_refreshed(self, product_id, data) -> None:
         self._single_active.discard(product_id)
+        self._update_refresh_ui()
         ok, message, hit = data.ok, None, None
         events = []
         if data.ok:
@@ -750,7 +769,7 @@ class MainWindow(QMainWindow):
         self._refresh_failures = []
         self._pending_refresh = len(products)
         self._refresh_total = len(products)
-        self.refresh_button.setEnabled(False)
+        self._update_refresh_ui()  # Refresh All becomes Stop
         for button in self._row_refresh_buttons.values():
             button.setEnabled(False)  # no single-row refresh mid-batch
         for product in products:
@@ -1004,7 +1023,7 @@ class MainWindow(QMainWindow):
         self._log_fetch_failures(failures)
 
     def _finalize_refresh(self) -> None:
-        self.refresh_button.setEnabled(True)
+        self._update_refresh_ui()  # back to Refresh All
         self._recompute_trends()  # new history points may change the trends
         self.reload()
         self._refresh_cart_if_open()   # reflect new prices in an open cart
@@ -1149,12 +1168,80 @@ class MainWindow(QMainWindow):
         except Exception:
             pass
 
-    def _start_task(self, url: str, key, on_finished) -> None:
-        task = ScrapeTask(url, key=key)
-        task.signals.finished.connect(on_finished)
+    def _start_task(self, url: str, key, on_finished, cancellable: bool = True) -> None:
+        """Queue one scrape. Refresh scrapes are `cancellable`: they share the run's
+        CancelToken, and their result is dropped if Stop was pressed meanwhile
+        (the generation changed), so nothing is written after Stop."""
+        token = self._run_token() if cancellable else None
+        task = ScrapeTask(url, key=key, token=token)
+        task.cancellable = cancellable
+        if cancellable:
+            gen = self._refresh_gen
+            task.signals.finished.connect(
+                lambda k, d, g=gen, cb=on_finished: cb(k, d) if g == self._refresh_gen else None
+            )
+        else:
+            task.signals.finished.connect(on_finished)
         task.signals.finished.connect(partial(self._discard_task, task))
         self._tasks.append(task)
         self._scrape_pool.start(task)
+
+    def _run_token(self) -> CancelToken:
+        if self._cancel_token is None:
+            self._cancel_token = CancelToken()
+        return self._cancel_token
+
+    # --- Stop ---------------------------------------------------------------
+
+    def _is_refreshing(self) -> bool:
+        return self._pending_refresh > 0 or bool(self._single_active)
+
+    def _on_refresh_button(self) -> None:
+        if self._is_refreshing():
+            self._stop_refresh()
+        else:
+            self._refresh_all()
+
+    def _update_refresh_ui(self) -> None:
+        """Refresh All turns into a red Stop while any refresh is running."""
+        refreshing = self._is_refreshing()
+        self.refresh_button.setEnabled(True)
+        self.refresh_button.setText("Stop" if refreshing else "Refresh All")
+        self.refresh_button.setToolTip(
+            "Stop the refresh (results already fetched are kept)" if refreshing
+            else "Re-check every product now"
+        )
+        self.refresh_button.setStyleSheet(_STOP_BUTTON_QSS if refreshing else "")
+        if self._tray_stop_action is not None:
+            self._tray_stop_action.setEnabled(refreshing)
+
+    def _stop_refresh(self) -> None:
+        """Cancel the running refresh. Products already fetched stay saved; queued
+        scrapes are dropped, in-flight Chrome sessions are quit, and any result
+        that still arrives is ignored. No change/failure notifications are sent."""
+        if not self._is_refreshing():
+            return
+        batch = self._pending_refresh > 0
+        done = self._refresh_total - self._pending_refresh if batch else 0
+        total = self._refresh_total if batch else 0
+
+        self._refresh_gen += 1  # results from before this point are ignored
+        for task in list(self._tasks):  # drop scrapes that haven't started yet
+            if getattr(task, "cancellable", False) and self._scrape_pool.tryTake(task):
+                self._tasks.remove(task)
+        token, self._cancel_token = self._cancel_token, None
+        if token is not None:
+            # quitting Chrome talks to chromedriver — keep it off the UI thread
+            threading.Thread(target=token.cancel, daemon=True).start()
+
+        self._pending_refresh = 0
+        self._single_active.clear()
+        self._refresh_events, self._target_hits, self._refresh_failures = [], [], []
+        self.reload()  # ⟳ → stored ✓/✗, row Refresh buttons re-enabled
+        self._update_refresh_ui()
+        self.statusBar().showMessage(
+            f"Refresh stopped — {done}/{total} product(s) updated" if batch else "Refresh stopped"
+        )
 
     def _discard_task(self, task, *_args) -> None:
         if task in self._tasks:
@@ -1220,6 +1307,8 @@ class MainWindow(QMainWindow):
         menu = QMenu()
         menu.addAction("Show", self._restore_window)
         menu.addAction("Refresh now", self._refresh_all)
+        self._tray_stop_action = menu.addAction("Stop refresh", self._stop_refresh)
+        self._tray_stop_action.setEnabled(False)
 
         # Auto-refresh interval, changeable from the tray (mirrors the toolbar
         # combo). Checkable + exclusive so the current choice shows a radio dot.
@@ -1418,6 +1507,7 @@ class MainWindow(QMainWindow):
         self._group_dialog = GroupViewDialog(
             group_id, group_name, parent=self,
             on_changed=self.reload, on_refresh=self._refresh_one,
+            on_edit=self._edit_product,
         )
         try:
             self._group_dialog.exec()
@@ -1448,7 +1538,10 @@ class MainWindow(QMainWindow):
 
     def _open_cart(self) -> None:
         from ui.cart_dialog import CartDialog
-        self._cart_dialog = CartDialog(self, on_changed=self.reload, on_refresh=self._refresh_one)
+        self._cart_dialog = CartDialog(
+            self, on_changed=self.reload, on_refresh=self._refresh_one,
+            on_edit=self._edit_product,
+        )
         try:
             self._cart_dialog.exec()
         finally:
@@ -1606,12 +1699,15 @@ class MainWindow(QMainWindow):
         if product is not None:
             GraphDialog(product, parent=self).exec()
 
-    def _edit_product(self, product_id: int) -> None:
+    def _edit_product(self, product_id: int, parent=None) -> None:
+        """Edit name / URL / target price. `parent` lets another window (e.g. the
+        group view) host the dialog so it opens on top of it, not behind."""
         product = repo.get_product(product_id)
         if product is None:
             return
         dialog = EditProductDialog(
-            product.name or "", product.url, getattr(product, "target_price", None), parent=self
+            product.name or "", product.url, getattr(product, "target_price", None),
+            parent=parent or self,
         )
         if dialog.exec() == EditProductDialog.DialogCode.Accepted:
             name, url, target = dialog.values()

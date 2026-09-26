@@ -494,11 +494,26 @@ products with their URLs (capped at 20, "…and N more") — and logs one
 and actionable (right-click → Refresh). Sent only when something failed, so a
 fully-successful refresh doesn't ping every cycle.
 
+### Phase 46 — Stop button (v0.19.0)
+**Refresh All** turns into a red **Stop** while any refresh (batch or per-row) is
+running; also **Stop refresh** in the tray menu and the **Esc** key. Stop cancels
+the current run only — products fetched before it stay saved, auto-refresh keeps
+its schedule. Three layers, since Python threads can't be killed: queued scrapes
+are removed from the pool (`QThreadPool.tryTake`); in-flight ones share the run's
+`CancelToken` ([core/scraping/browser.py](../core/scraping/browser.py)), whose
+`cancel()` quits their headless Chrome and makes `check_cancelled()` raise before
+any further fetch; and a refresh *generation* counter drops any result that still
+arrives, so nothing is written after Stop. The table reloads (⟳ → stored ✓/✗),
+and no change/failure notifications are sent for a stopped run. Adding a product
+is not cancellable. Also **Edit** in the group view's right-click menu and as a
+button on each cart row (the main window's `_edit_product`, opened over that
+window, which then rebuilds).
+
 ---
 
 ## Upcoming
 
-No numbered phases queued — the planned set (through Phase 45) is shipped.
+No numbered phases queued — the planned set (through Phase 46) is shipped.
 Candidate next work lives under **Known follow-ups / tech debt** below.
 
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome

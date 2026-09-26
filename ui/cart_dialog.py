@@ -29,7 +29,7 @@ from ui.logos import _domain_key, logo_pixmap
 from ui.theme import link_color
 
 (_COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_QTY, _COL_TOTAL,
- _COL_REFRESH, _COL_REMOVE, _COL_DELETE) = range(9)
+ _COL_REFRESH, _COL_EDIT, _COL_REMOVE, _COL_DELETE) = range(10)
 _UP_COLOR = "#cc3b3b"    # price rose (buyer's view)
 _DOWN_COLOR = "#2e9e44"  # price fell
 
@@ -39,12 +39,13 @@ def _site_name(url: str) -> str:
 
 
 class CartDialog(QDialog):
-    def __init__(self, parent=None, on_changed=None, on_refresh=None):
+    def __init__(self, parent=None, on_changed=None, on_refresh=None, on_edit=None):
         super().__init__(parent)
         self._on_changed = on_changed  # called after a delete so the caller refreshes
         self._on_refresh = on_refresh  # re-scrape one product (main window handler)
+        self._on_edit = on_edit        # edit name / URL / target (main window handler)
         self.setWindowTitle("Shopping cart")
-        self.resize(980, 560)
+        self.resize(1080, 560)
         layout = QVBoxLayout(self)
 
         self._intro = QLabel()
@@ -52,9 +53,9 @@ class CartDialog(QDialog):
         self._intro.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._intro)
 
-        self.table = QTableWidget(0, 9)
+        self.table = QTableWidget(0, 10)
         self.table.setHorizontalHeaderLabels(
-            ["", "Product", "Site", "Unit price", "Qty", "Line total", "", "", ""]
+            ["", "Product", "Site", "Unit price", "Qty", "Line total", "", "", "", ""]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -68,6 +69,7 @@ class CartDialog(QDialog):
         self.table.setColumnWidth(_COL_QTY, 80)
         self.table.setColumnWidth(_COL_TOTAL, 130)
         self.table.setColumnWidth(_COL_REFRESH, 90)
+        self.table.setColumnWidth(_COL_EDIT, 90)
         self.table.setColumnWidth(_COL_REMOVE, 90)
         self.table.setColumnWidth(_COL_DELETE, 90)
         self.table.cellClicked.connect(self._open_link)
@@ -166,6 +168,12 @@ class CartDialog(QDialog):
         refresh.clicked.connect(partial(self._refresh, product.id))
         self.table.setCellWidget(row, _COL_REFRESH, refresh)
 
+        edit = QPushButton("Edit")
+        edit.setToolTip("Edit the product's name, link, or target price")
+        edit.clicked.connect(partial(self._edit, product.id))
+        edit.setEnabled(self._on_edit is not None)
+        self.table.setCellWidget(row, _COL_EDIT, edit)
+
         remove = QPushButton("Remove")
         remove.setToolTip("Remove from the cart (keeps tracking the product)")
         remove.clicked.connect(partial(self._remove, product.id))
@@ -230,6 +238,14 @@ class CartDialog(QDialog):
         window reloads the open cart (reload_prices) so the price updates here."""
         if self._on_refresh is not None:
             self._on_refresh(product_id)
+
+    def _edit(self, product_id) -> None:
+        """Open the main window's edit dialog over the cart, then rebuild so a
+        changed name / link shows here right away."""
+        if self._on_edit is None:
+            return
+        self._on_edit(product_id, parent=self)
+        self._reload()
 
     def _remove(self, product_id) -> None:
         repo.remove_from_cart(product_id)

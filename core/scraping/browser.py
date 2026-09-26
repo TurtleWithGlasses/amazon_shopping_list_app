@@ -5,6 +5,7 @@ HTTP request is the Windows fallback when Chrome fails to start. This module is
 retailer-agnostic — adapters pass their own `wait_css` selector.
 """
 import sys
+import threading
 import time
 from typing import Optional
 
@@ -32,6 +33,61 @@ _REQUEST_HEADERS = {
 }
 
 
+class ScrapeCancelled(Exception):
+    """Raised inside a scrape when the user pressed Stop."""
+
+
+class CancelToken:
+    """Shared by every scrape of one refresh run. `cancel()` marks the run as
+    stopped and quits any headless Chrome it has open, so an in-flight Selenium
+    call fails within about a second instead of running its 20 s waits."""
+
+    def __init__(self):
+        self._event = threading.Event()
+        self._drivers = set()
+        self._lock = threading.Lock()
+
+    @property
+    def cancelled(self) -> bool:
+        return self._event.is_set()
+
+    def cancel(self) -> None:
+        self._event.set()
+        with self._lock:
+            drivers = list(self._drivers)
+        for driver in drivers:
+            try:
+                driver.quit()
+            except Exception:
+                pass
+
+    def _add(self, driver) -> None:
+        with self._lock:
+            self._drivers.add(driver)
+
+    def _discard(self, driver) -> None:
+        with self._lock:
+            self._drivers.discard(driver)
+
+
+# The token of the scrape running on this worker thread (set by ScrapeTask).
+_local = threading.local()
+
+
+def set_cancel_token(token: Optional[CancelToken]) -> None:
+    _local.token = token
+
+
+def _current_token() -> Optional[CancelToken]:
+    return getattr(_local, "token", None)
+
+
+def check_cancelled() -> None:
+    token = _current_token()
+    if token is not None and token.cancelled:
+        raise ScrapeCancelled("Stopped by user")
+
+
 _session = None
 
 
@@ -47,6 +103,7 @@ def _get_session():
 
 def fetch_with_requests(url: str) -> Optional[str]:
     """Fast HTTP fetch — works on residential IPs, no browser needed."""
+    check_cancelled()
     try:
         resp = _get_session().get(url, timeout=20)
         if resp.status_code == 200:
@@ -98,6 +155,7 @@ def fetch_with_selenium(
     driver = None
     last_err = None
     for _ in range(3):
+        check_cancelled()  # don't launch a browser after Stop
         try:
             driver = (webdriver.Chrome(service=service, options=options)
                       if service else webdriver.Chrome(options=options))
@@ -108,7 +166,11 @@ def fetch_with_selenium(
     if driver is None:
         raise last_err
 
+    token = _current_token()
+    if token is not None:
+        token._add(driver)  # so Stop can quit it mid-page-load
     try:
+        check_cancelled()  # Stop may have landed while Chrome was starting
         driver.execute_cdp_cmd(
             "Network.setExtraHTTPHeaders",
             {"headers": {"Accept-Language": accept_language}},
@@ -136,9 +198,15 @@ def fetch_with_selenium(
             except Exception:
                 pass
         time.sleep(settle_seconds)  # let JS-rendered widgets finish
+        check_cancelled()
         return driver.page_source
     finally:
-        driver.quit()
+        if token is not None:
+            token._discard(driver)
+        try:
+            driver.quit()
+        except Exception:
+            pass  # already quit by Stop
 
 
 def get_page_html(url: str, *, wait_css: Optional[str] = None,
@@ -149,7 +217,10 @@ def get_page_html(url: str, *, wait_css: Optional[str] = None,
         return fetch_with_selenium(url, **kwargs)
     try:
         return fetch_with_selenium(url, **kwargs)
+    except ScrapeCancelled:
+        raise  # stopped — don't fall back to another fetch
     except Exception:
+        check_cancelled()  # a quit-by-Stop driver surfaces as a WebDriver error
         html = fetch_with_requests(url)
         if html:
             return html

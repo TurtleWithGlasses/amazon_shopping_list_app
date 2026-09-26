@@ -2,6 +2,7 @@
 from PySide6.QtCore import QObject, QRunnable, Signal, Slot
 
 from core.scraping import ProductData, scrape
+from core.scraping.browser import set_cancel_token
 
 
 class ScrapeSignals(QObject):
@@ -10,20 +11,31 @@ class ScrapeSignals(QObject):
 
 
 class ScrapeTask(QRunnable):
-    """Runs one scrape on the global QThreadPool and emits the result."""
+    """Runs one scrape on a QThreadPool and emits the result.
 
-    def __init__(self, url: str, key=None):
+    `token` (a CancelToken) ties the task to a refresh run so Stop can abort it:
+    a task that starts after Stop bails out at once, and one in flight has its
+    headless Chrome quit."""
+
+    def __init__(self, url: str, key=None, token=None):
         super().__init__()
         self.url = url
         self.key = key
+        self.token = token
         self.signals = ScrapeSignals()
 
     @Slot()
     def run(self) -> None:
+        set_cancel_token(self.token)
         try:
-            data = scrape(self.url)
+            if self.token is not None and self.token.cancelled:
+                data = ProductData(url=self.url, error="Stopped by user")
+            else:
+                data = scrape(self.url)
         except Exception as exc:  # never let a worker thread crash the app
             data = ProductData(url=self.url, error=str(exc))
+        finally:
+            set_cancel_token(None)
         try:
             self.signals.finished.emit(self.key, data)
         except RuntimeError:

@@ -37,12 +37,13 @@ def _site_name(url: str) -> str:
 
 class GroupViewDialog(QDialog):
     def __init__(self, group_id: int, group_name: str, parent=None, on_changed=None,
-                 on_refresh=None):
+                 on_refresh=None, on_edit=None):
         super().__init__(parent)
         self.group_id = group_id
         self.group_name = group_name
         self._on_changed = on_changed  # called after a delete so the caller refreshes
         self._on_refresh = on_refresh  # re-scrape one product (main window handler)
+        self._on_edit = on_edit        # edit name / URL / target (main window handler)
         self.setWindowTitle(f"Group — {group_name}")
         self.resize(860, 680)
         self._layout = QVBoxLayout(self)
@@ -179,9 +180,17 @@ class GroupViewDialog(QDialog):
         menu.addAction("Add to cart", partial(self._add_to_cart, product))
         if self._on_refresh is not None:
             menu.addAction("Refresh", partial(self._refresh, product))
+        if self._on_edit is not None:
+            menu.addAction("Edit", partial(self._edit, product))
         menu.addSeparator()
         menu.addAction("Delete", lambda: self._delete(product))
         menu.exec(self.table.viewport().mapToGlobal(pos))
+
+    def _edit(self, product) -> None:
+        """Open the main window's edit dialog over this view, then rebuild so a
+        changed name / URL / target shows here right away."""
+        self._on_edit(product.id, parent=self)
+        self._populate()
 
     def _refresh(self, product) -> None:
         """Re-scrape one product via the main window; when it finishes, the main
