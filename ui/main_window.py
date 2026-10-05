@@ -48,6 +48,7 @@ from services.stock import OUT_OF_STOCK, classify_stock
 from services.telegram import TelegramNotifier
 from services.updater import DownloadTask, UpdateCheckTask
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
+from ui.change_cell import change_item, price_change_pct
 from ui.changes_dialog import StartupChangesDialog
 from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
@@ -57,16 +58,16 @@ from ui.logos import logo_key, logo_pixmap
 from ui.notifications import TrayChannel
 from ui.settings_dialog import SettingsDialog
 from ui.formatting import format_price
-from ui.theme import link_color
+from ui.theme import STOP_BUTTON_QSS, link_color
 
 _INCREASE_COLOR = QColor("#c9a000")  # yellow/gold: stock level went up
 _DECREASE_COLOR = QColor("#2e9e44")  # green: price or stock went down
 _CHANGED_COLOR = QColor("#e8830c")   # orange: changed, direction indeterminate
 _PRICE_UP_COLOR = QColor("#cc3b3b")  # red: price rose (buyer's view; matches notifications)
 
-(COL_NUM, COL_MOVE, COL_LOGO, COL_IMAGE, COL_NAME, COL_PRICE, COL_TREND,
- COL_STOCK, COL_CHECKED, COL_STATUS, COL_ACTIONS) = range(11)
-COLUMN_COUNT = 11
+(COL_NUM, COL_MOVE, COL_LOGO, COL_IMAGE, COL_NAME, COL_PRICE, COL_CHANGE, COL_TREND,
+ COL_STOCK, COL_CHECKED, COL_STATUS, COL_ACTIONS) = range(12)
+COLUMN_COUNT = 12
 
 # Price-trend indicator (Phase 37): glyph, color, label by state name.
 _TREND_STYLES = {
@@ -102,14 +103,6 @@ SNAPSHOT_INTERVAL_MS = int(os.environ.get("PRICETRACKER_SNAPSHOT_MS", 60 * 60 * 
 # known price is treated as suspect (often a recommended product's price picked
 # up by mistake) and held until a second consecutive scan confirms it.
 SUSPECT_JUMP_FACTOR = 2.5
-
-# Refresh All turns into this red Stop button while a refresh is running.
-_STOP_BUTTON_QSS = (
-    "QPushButton { background: #cc3b3b; color: #ffffff; border: none;"
-    " border-radius: 16px; padding: 8px 20px; font-weight: 600; }"
-    "QPushButton:hover { background: #b02f2f; }"
-)
-
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -254,7 +247,7 @@ class MainWindow(QMainWindow):
         # Table
         self.table = QTableWidget(0, COLUMN_COUNT)
         self.table.setHorizontalHeaderLabels(
-            ["#", "", "", "", "Product", "Price", "Trend", "Stock",
+            ["#", "", "", "", "Product", "Price", "Change", "Trend", "Stock",
              "Last checked", "Status", "Actions"]
         )
         self.table.verticalHeader().setVisible(False)
@@ -270,7 +263,7 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         for col, width in (
             (COL_NUM, 38), (COL_MOVE, 84), (COL_LOGO, 84), (COL_IMAGE, 74),
-            (COL_NAME, 320), (COL_PRICE, 110), (COL_TREND, 64), (COL_STOCK, 150),
+            (COL_NAME, 320), (COL_PRICE, 110), (COL_CHANGE, 90), (COL_TREND, 64), (COL_STOCK, 150),
             (COL_CHECKED, 140), (COL_STATUS, 64), (COL_ACTIONS, 340),
         ):
             self.table.setColumnWidth(col, width)
@@ -327,13 +320,15 @@ class MainWindow(QMainWindow):
 
     # --- sorting -----------------------------------------------------------
 
-    _SORTABLE_COLUMNS = (COL_NAME, COL_PRICE, COL_TREND, COL_STOCK, COL_CHECKED)
+    _SORTABLE_COLUMNS = (COL_NAME, COL_PRICE, COL_CHANGE, COL_TREND, COL_STOCK, COL_CHECKED)
 
     def _sort_value(self, product, col):
         if col == COL_NAME:
             return (product.name or product.url or "").casefold()
         if col == COL_PRICE:
             return product.last_price
+        if col == COL_CHANGE:
+            return price_change_pct(product)  # biggest drops sort first ascending
         if col == COL_TREND:
             return self._trend_cache.get(product.id, ("unknown", None))[1]  # % change
         if col == COL_STOCK:
@@ -405,6 +400,9 @@ class MainWindow(QMainWindow):
         if tips:
             price_item.setToolTip(" · ".join(tips))
         self.table.setItem(row, COL_PRICE, price_item)
+
+        # % of the last price move (same value as the group view and cart).
+        self.table.setItem(row, COL_CHANGE, change_item(product))
 
         # Price trend over the window (Phase 37), from the batched cache.
         state, pct = self._trend_cache.get(product.id, ("unknown", None))
@@ -692,6 +690,15 @@ class MainWindow(QMainWindow):
         (tray + Telegram) on any price/stock change — same as the auto-refresh."""
         self._run_refresh(snapshot=True, notify=True)
 
+    def _refresh_products(self, product_ids) -> None:
+        """Refresh just these products (a group's or the cart's) as one batch —
+        same saving, status marks, notifications and Stop as Refresh All."""
+        if self._is_refreshing():
+            return
+        wanted = set(product_ids)
+        products = [p for p in repo.list_products() if p.id in wanted]
+        self._run_refresh(snapshot=True, notify=True, products=products)
+
     def _refresh_one(self, product_id) -> None:
         """Re-scrape a single product without touching the rest of the table."""
         if self._pending_refresh > 0 or product_id in self._single_active:
@@ -754,10 +761,12 @@ class MainWindow(QMainWindow):
                           title="While you were away", report=True)
 
     def _run_refresh(self, *, snapshot: bool, notify: bool,
-                     title: str = "Price / stock changed", report: bool = False) -> None:
+                     title: str = "Price / stock changed", report: bool = False,
+                     products=None) -> None:
         if self._pending_refresh > 0:
             return  # a batch is already running
-        products = repo.list_products()
+        if products is None:
+            products = repo.list_products()
         if not products:
             return
         self._refresh_snapshot = snapshot
@@ -804,6 +813,7 @@ class MainWindow(QMainWindow):
         self._pending_refresh -= 1
         done = self._refresh_total - self._pending_refresh
         self.statusBar().showMessage(f"Refreshing {done}/{self._refresh_total}…")
+        self._sync_dialog_refresh_state()
         if self._pending_refresh <= 0:
             self._finalize_refresh()
 
@@ -1211,9 +1221,21 @@ class MainWindow(QMainWindow):
             "Stop the refresh (results already fetched are kept)" if refreshing
             else "Re-check every product now"
         )
-        self.refresh_button.setStyleSheet(_STOP_BUTTON_QSS if refreshing else "")
+        self.refresh_button.setStyleSheet(STOP_BUTTON_QSS if refreshing else "")
         if self._tray_stop_action is not None:
             self._tray_stop_action.setEnabled(refreshing)
+        self._sync_dialog_refresh_state()
+
+    def _sync_dialog_refresh_state(self) -> None:
+        """Mirror the refresh state onto an open group view / cart, so their
+        Refresh button becomes Stop (with progress) while anything refreshes."""
+        refreshing = self._is_refreshing()
+        progress = ""
+        if self._pending_refresh > 0:
+            progress = f"{self._refresh_total - self._pending_refresh}/{self._refresh_total}"
+        for dialog in (self._cart_dialog, self._group_dialog):
+            if dialog is not None:
+                dialog.set_refresh_state(refreshing, progress)
 
     def _stop_refresh(self) -> None:
         """Cancel the running refresh. Products already fetched stay saved; queued
@@ -1238,6 +1260,8 @@ class MainWindow(QMainWindow):
         self._single_active.clear()
         self._refresh_events, self._target_hits, self._refresh_failures = [], [], []
         self.reload()  # ⟳ → stored ✓/✗, row Refresh buttons re-enabled
+        self._refresh_cart_if_open()   # show what was saved before the Stop
+        self._refresh_group_if_open()
         self._update_refresh_ui()
         self.statusBar().showMessage(
             f"Refresh stopped — {done}/{total} product(s) updated" if batch else "Refresh stopped"
@@ -1342,7 +1366,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.showMaximized)
         # _v2: layout defaults changed (taller rows, wider columns), so old saved
         # column widths are intentionally ignored.
-        header_state = self._settings.value("header_state_v8")
+        header_state = self._settings.value("header_state_v9")
         if header_state is not None:
             self.table.horizontalHeader().restoreState(header_state)
         close_to_tray = self._settings.value("close_to_tray", True, type=bool)
@@ -1377,7 +1401,7 @@ class MainWindow(QMainWindow):
     def _save_layout(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("window_maximized", self.isMaximized() or self.isFullScreen())
-        self._settings.setValue("header_state_v8", self.table.horizontalHeader().saveState())
+        self._settings.setValue("header_state_v9", self.table.horizontalHeader().saveState())
         self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
         self._settings.setValue("sort_column", -1 if self._sort_column is None else self._sort_column)
         self._settings.setValue("sort_order", self._sort_order.value)
@@ -1507,8 +1531,10 @@ class MainWindow(QMainWindow):
         self._group_dialog = GroupViewDialog(
             group_id, group_name, parent=self,
             on_changed=self.reload, on_refresh=self._refresh_one,
-            on_edit=self._edit_product,
+            on_edit=self._edit_product, on_refresh_many=self._refresh_products,
+            on_stop=self._stop_refresh,
         )
+        self._sync_dialog_refresh_state()
         try:
             self._group_dialog.exec()
         finally:
@@ -1540,8 +1566,10 @@ class MainWindow(QMainWindow):
         from ui.cart_dialog import CartDialog
         self._cart_dialog = CartDialog(
             self, on_changed=self.reload, on_refresh=self._refresh_one,
-            on_edit=self._edit_product,
+            on_edit=self._edit_product, on_refresh_many=self._refresh_products,
+            on_stop=self._stop_refresh,
         )
+        self._sync_dialog_refresh_state()
         try:
             self._cart_dialog.exec()
         finally:

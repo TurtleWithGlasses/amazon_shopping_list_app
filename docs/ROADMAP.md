@@ -509,11 +509,27 @@ is not cancellable. Also **Edit** in the group view's right-click menu and as a
 button on each cart row (the main window's `_edit_product`, opened over that
 window, which then rebuilds).
 
+### Phase 47 — Change % column + per-group / cart refresh (v0.20.0)
+A **Change** column on the main table, the group view and the cart shows each
+product's last price move (`prev_price` → `last_price`) as a percentage —
+▲ red when it rose, ▼ green when it fell, "—" when no change is recorded yet; the
+tooltip shows both prices and the main table can sort by it. One shared helper
+([ui/change_cell.py](../ui/change_cell.py)) builds the cell for all three, so they
+always agree; it's one division per row on data already loaded (~1.6 ms for 200
+rows). The main table's saved header state key moved to `header_state_v9`.
+The group view gets a **Refresh group** button and the cart a **Refresh cart**
+button: they refresh just those products through the same batch path as Refresh
+All (`_run_refresh(products=…)`), so saving, the price guard, status marks,
+notifications and the x/y summary all apply and the main table updates too.
+While any refresh runs, those buttons become a red **Stop (done/total)** wired to
+the main window's Stop; a Stop also rebuilds an open group/cart view. The red
+Stop style now lives in [ui/theme.py](../ui/theme.py) (`STOP_BUTTON_QSS`).
+
 ---
 
 ## Upcoming
 
-No numbered phases queued — the planned set (through Phase 46) is shipped.
+No numbered phases queued — the planned set (through Phase 47) is shipped.
 Candidate next work lives under **Known follow-ups / tech debt** below.
 
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome

@@ -24,12 +24,13 @@ from PySide6.QtWidgets import (
 
 from core import datastore as repo
 from core.currency import normalize_currency
+from ui.change_cell import change_item
 from ui.formatting import format_price
 from ui.logos import _domain_key, logo_pixmap
-from ui.theme import link_color
+from ui.theme import STOP_BUTTON_QSS, link_color
 
-(_COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_QTY, _COL_TOTAL,
- _COL_REFRESH, _COL_EDIT, _COL_REMOVE, _COL_DELETE) = range(10)
+(_COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_CHANGE, _COL_QTY, _COL_TOTAL,
+ _COL_REFRESH, _COL_EDIT, _COL_REMOVE, _COL_DELETE) = range(11)
 _UP_COLOR = "#cc3b3b"    # price rose (buyer's view)
 _DOWN_COLOR = "#2e9e44"  # price fell
 
@@ -39,13 +40,18 @@ def _site_name(url: str) -> str:
 
 
 class CartDialog(QDialog):
-    def __init__(self, parent=None, on_changed=None, on_refresh=None, on_edit=None):
+    def __init__(self, parent=None, on_changed=None, on_refresh=None, on_edit=None,
+                 on_refresh_many=None, on_stop=None):
         super().__init__(parent)
         self._on_changed = on_changed  # called after a delete so the caller refreshes
         self._on_refresh = on_refresh  # re-scrape one product (main window handler)
         self._on_edit = on_edit        # edit name / URL / target (main window handler)
+        self._on_refresh_many = on_refresh_many  # refresh a list of products as one batch
+        self._on_stop = on_stop        # stop the running refresh (main window)
+        self._refreshing = False       # pushed by the main window (set_refresh_state)
+        self.products = []
         self.setWindowTitle("Shopping cart")
-        self.resize(1080, 560)
+        self.resize(1170, 560)
         layout = QVBoxLayout(self)
 
         self._intro = QLabel()
@@ -53,9 +59,9 @@ class CartDialog(QDialog):
         self._intro.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._intro)
 
-        self.table = QTableWidget(0, 10)
+        self.table = QTableWidget(0, 11)
         self.table.setHorizontalHeaderLabels(
-            ["", "Product", "Site", "Unit price", "Qty", "Line total", "", "", "", ""]
+            ["", "Product", "Site", "Unit price", "Change", "Qty", "Line total", "", "", "", ""]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -66,6 +72,7 @@ class CartDialog(QDialog):
         self.table.setColumnWidth(_COL_LOGO, 76)
         self.table.setColumnWidth(_COL_SITE, 110)
         self.table.setColumnWidth(_COL_PRICE, 120)
+        self.table.setColumnWidth(_COL_CHANGE, 90)
         self.table.setColumnWidth(_COL_QTY, 80)
         self.table.setColumnWidth(_COL_TOTAL, 130)
         self.table.setColumnWidth(_COL_REFRESH, 90)
@@ -81,6 +88,11 @@ class CartDialog(QDialog):
         font = self.total_label.font(); font.setPointSize(font.pointSize() + 2)
         self.total_label.setFont(font)
         bottom.addWidget(self.total_label, 1)
+        self.refresh_button = QPushButton()
+        self.refresh_button.setObjectName("primary")
+        self.refresh_button.clicked.connect(self._on_refresh_button)
+        self.refresh_button.setVisible(on_refresh_many is not None)
+        bottom.addWidget(self.refresh_button)
         self.clear_button = QPushButton("Clear cart")
         self.clear_button.clicked.connect(self._clear)
         bottom.addWidget(self.clear_button)
@@ -123,6 +135,7 @@ class CartDialog(QDialog):
                 "<b>Add to cart</b> to start building one."
             )
         self.clear_button.setEnabled(bool(self.products))
+        self.set_refresh_state(self._refreshing)  # enable/disable for an empty cart
         self._update_total()
 
     def _add_row(self, product) -> None:
@@ -150,6 +163,7 @@ class CartDialog(QDialog):
         price_item = QTableWidgetItem(format_price(product.last_price, self._cur(product)))
         price_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         self.table.setItem(row, _COL_PRICE, price_item)
+        self.table.setItem(row, _COL_CHANGE, change_item(product))
 
         spin = QSpinBox()
         spin.setRange(1, 999)
@@ -221,6 +235,31 @@ class CartDialog(QDialog):
                          f"{arrow} {delta:+,.2f} {cur}</span>".rstrip())
             parts.append(text)
         self.total_label.setText("<br>".join(parts))
+
+    # --- refresh the whole cart --------------------------------------------
+
+    def set_refresh_state(self, refreshing: bool, progress: str = "") -> None:
+        """Called by the main window whenever a refresh starts / progresses / ends:
+        Refresh cart becomes a red Stop (with progress) while anything refreshes."""
+        self._refreshing = refreshing
+        button = self.refresh_button
+        if refreshing:
+            button.setText(f"Stop  ({progress})" if progress else "Stop")
+            button.setToolTip("Stop the refresh (results already fetched are kept)")
+            button.setStyleSheet(STOP_BUTTON_QSS)
+            button.setEnabled(True)
+        else:
+            button.setText("Refresh cart")
+            button.setToolTip("Re-check every product in the cart now")
+            button.setStyleSheet("")
+            button.setEnabled(bool(self.products))
+
+    def _on_refresh_button(self) -> None:
+        if self._refreshing:
+            if self._on_stop is not None:
+                self._on_stop()
+        elif self.products and self._on_refresh_many is not None:
+            self._on_refresh_many([p.id for p in self.products])
 
     # --- actions -----------------------------------------------------------
 

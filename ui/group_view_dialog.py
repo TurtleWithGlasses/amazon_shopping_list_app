@@ -8,11 +8,13 @@ from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QDialog,
+    QHBoxLayout,
     QHeaderView,
     QInputDialog,
     QLabel,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
@@ -20,15 +22,16 @@ from PySide6.QtWidgets import (
 )
 
 from core import datastore as repo
+from ui.change_cell import change_item
 from ui.formatting import format_price
 from ui.graph_style import LINE_COLORS, style_plot
 from ui.logos import _domain_key, logo_pixmap
-from ui.theme import link_color
+from ui.theme import STOP_BUTTON_QSS, link_color
 
 _CHEAPEST = QColor("#2e9e44")  # green: the lowest-priced member
 
 # columns
-_COL_SWATCH, _COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_LOW = range(6)
+_COL_SWATCH, _COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_CHANGE, _COL_LOW = range(7)
 
 
 def _site_name(url: str) -> str:
@@ -37,13 +40,17 @@ def _site_name(url: str) -> str:
 
 class GroupViewDialog(QDialog):
     def __init__(self, group_id: int, group_name: str, parent=None, on_changed=None,
-                 on_refresh=None, on_edit=None):
+                 on_refresh=None, on_edit=None, on_refresh_many=None, on_stop=None):
         super().__init__(parent)
         self.group_id = group_id
         self.group_name = group_name
         self._on_changed = on_changed  # called after a delete so the caller refreshes
         self._on_refresh = on_refresh  # re-scrape one product (main window handler)
         self._on_edit = on_edit        # edit name / URL / target (main window handler)
+        self._on_refresh_many = on_refresh_many  # refresh a list of products as one batch
+        self._on_stop = on_stop        # stop the running refresh (main window)
+        self._refresh_state = (False, "")  # (refreshing, "done/total"), pushed by main
+        self.refresh_button = None
         self.setWindowTitle(f"Group — {group_name}")
         self.resize(860, 680)
         self._layout = QVBoxLayout(self)
@@ -61,6 +68,9 @@ class GroupViewDialog(QDialog):
             widget = item.widget()
             if widget is not None:
                 widget.deleteLater()
+            elif item.layout() is not None:
+                self._clear_layout(item.layout())
+        self.refresh_button = None
 
         members = repo.group_members(self.group_id)
         # Cheapest first (products without a price sort to the bottom).
@@ -77,10 +87,20 @@ class GroupViewDialog(QDialog):
             self._layout.addWidget(QLabel("This group has no products yet."))
             return
 
-        self._layout.addWidget(QLabel(
+        top = QHBoxLayout()
+        intro = QLabel(
             f"<b>{self.group_name}</b> — {len(members)} product(s); cheapest first, "
             "highlighted in green. Click a name to open it; right-click to move or delete."
-        ))
+        )
+        intro.setWordWrap(True)
+        top.addWidget(intro, 1)
+        if self._on_refresh_many is not None:
+            self.refresh_button = QPushButton()
+            self.refresh_button.setObjectName("primary")
+            self.refresh_button.clicked.connect(self._on_refresh_button)
+            top.addWidget(self.refresh_button)
+            self._apply_refresh_state()
+        self._layout.addLayout(top)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self._build_table())
@@ -90,12 +110,48 @@ class GroupViewDialog(QDialog):
         splitter.setSizes([230, 380])
         self._layout.addWidget(splitter, 1)
 
+    @staticmethod
+    def _clear_layout(layout) -> None:
+        while layout.count():
+            child = layout.takeAt(0)
+            if child.widget() is not None:
+                child.widget().deleteLater()
+        layout.deleteLater()
+
+    # --- refresh this group -------------------------------------------------
+
+    def set_refresh_state(self, refreshing: bool, progress: str = "") -> None:
+        """Called by the main window whenever a refresh starts / progresses / ends."""
+        self._refresh_state = (refreshing, progress)
+        self._apply_refresh_state()
+
+    def _apply_refresh_state(self) -> None:
+        button = self.refresh_button
+        if button is None:
+            return
+        refreshing, progress = self._refresh_state
+        if refreshing:
+            button.setText(f"Stop  ({progress})" if progress else "Stop")
+            button.setToolTip("Stop the refresh (results already fetched are kept)")
+            button.setStyleSheet(STOP_BUTTON_QSS)
+        else:
+            button.setText("Refresh group")
+            button.setToolTip("Re-check every product in this group now")
+            button.setStyleSheet("")
+
+    def _on_refresh_button(self) -> None:
+        if self._refresh_state[0]:
+            if self._on_stop is not None:
+                self._on_stop()
+        elif self.members:
+            self._on_refresh_many([m.id for m in self.members])
+
     # --- members table -----------------------------------------------------
 
     def _build_table(self) -> QTableWidget:
-        table = QTableWidget(0, 6)
+        table = QTableWidget(0, 7)
         self.table = table
-        table.setHorizontalHeaderLabels(["", "", "Product", "Site", "Price", "30-day low"])
+        table.setHorizontalHeaderLabels(["", "", "Product", "Site", "Price", "Change", "30-day low"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -106,6 +162,7 @@ class GroupViewDialog(QDialog):
         table.setColumnWidth(_COL_LOGO, 76)
         table.setColumnWidth(_COL_SITE, 110)
         table.setColumnWidth(_COL_PRICE, 130)
+        table.setColumnWidth(_COL_CHANGE, 90)
         table.setColumnWidth(_COL_LOW, 130)
         table.cellClicked.connect(self._open_link)
         table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -143,6 +200,7 @@ class GroupViewDialog(QDialog):
                 price_item.setForeground(_CHEAPEST)
                 f = price_item.font(); f.setBold(True); price_item.setFont(f)
             table.setItem(row, _COL_PRICE, price_item)
+            table.setItem(row, _COL_CHANGE, change_item(product))
 
             low = self._thirty_day_low(product.id, since30)
             low_item = QTableWidgetItem(format_price(low, product.currency) if low is not None else "—")

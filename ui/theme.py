@@ -107,6 +107,15 @@ def active_theme() -> dict:
     return THEMES.get(mode, THEMES[DEFAULT_THEME])
 
 
+# "Refresh" buttons turn into this red Stop while a refresh is running
+# (main window, group view, cart).
+STOP_BUTTON_QSS = (
+    "QPushButton { background: #cc3b3b; color: #ffffff; border: none;"
+    " border-radius: 16px; padding: 8px 20px; font-weight: 600; }"
+    "QPushButton:hover { background: #b02f2f; }"
+)
+
+
 def link_color() -> QColor:
     """Product-name link color for the active theme (harmonizes per theme)."""
     return QColor(active_theme()["link"])
