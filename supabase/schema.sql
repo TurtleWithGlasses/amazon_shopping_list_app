@@ -131,3 +131,31 @@ create policy "own history" on public.price_history
         select 1 from public.products p
         where p.id = price_history.product_id and p.user_id = auth.uid()
     ));
+
+-- Phase 48: "Change" column periods (1W / 1M / 3M / 6M / 1Y).
+-- Each product's price as of each cutoff = the latest history point at or
+-- before it. One indexed lookup per product per cutoff (price_history_product_idx),
+-- so the app never downloads months of history. `idx` is the cutoff's 1-based
+-- position in the input array. Runs as the caller, so RLS still applies.
+create or replace function public.prices_at(cutoffs timestamptz[])
+returns table (idx bigint, product_id bigint, price double precision)
+language sql
+stable
+as $$
+    select c.idx, p.id, h.price
+    from unnest(cutoffs) with ordinality as c(cutoff, idx)
+    cross join public.products p
+    cross join lateral (
+        select ph.price
+        from public.price_history ph
+        where ph.product_id = p.id
+          and ph.captured_at <= c.cutoff
+          and ph.price is not null
+        order by ph.captured_at desc
+        limit 1
+    ) h
+    where p.user_id = auth.uid()
+      and p.deleted_at is null
+    order by c.idx, p.id;
+$$;
+grant execute on function public.prices_at(timestamptz[]) to authenticated;

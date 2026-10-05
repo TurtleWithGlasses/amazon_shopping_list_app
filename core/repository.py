@@ -3,7 +3,7 @@
 The UI and the background scheduler call these functions; they never touch the
 ORM session directly.
 """
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import urlparse
 
@@ -265,6 +265,32 @@ def recent_history(since: datetime) -> dict:
         for product_id, captured_at, price in session.execute(stmt):
             result.setdefault(product_id, []).append((captured_at, price))
         return result
+
+
+def prices_at(cutoffs: dict) -> dict:
+    """Each product's price as of each cutoff (the latest point at or before it),
+    e.g. {'1w': {product_id: price}, …}. Products with no point that old are
+    absent. One indexed query per cutoff — no history is loaded into Python."""
+    result: dict = {}
+    with session_scope() as session:
+        for key, cutoff in cutoffs.items():
+            if cutoff.tzinfo is not None:  # stored timestamps are naive UTC
+                cutoff = cutoff.astimezone(timezone.utc).replace(tzinfo=None)
+            latest = (
+                select(PriceHistory.product_id,
+                       func.max(PriceHistory.captured_at).label("ts"))
+                .where(PriceHistory.captured_at <= cutoff,
+                       PriceHistory.price.is_not(None))
+                .group_by(PriceHistory.product_id)
+                .subquery()
+            )
+            stmt = (
+                select(PriceHistory.product_id, PriceHistory.price)
+                .join(latest, (PriceHistory.product_id == latest.c.product_id)
+                      & (PriceHistory.captured_at == latest.c.ts))
+            )
+            result[key] = {pid: price for pid, price in session.execute(stmt)}
+    return result
 
 
 # --- groups (Phase 34) ----------------------------------------------------

@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import datastore as repo
-from ui.change_cell import change_item
+from ui.change_cell import change_header, change_item
 from ui.formatting import format_price
 from ui.graph_style import LINE_COLORS, style_plot
 from ui.logos import _domain_key, logo_pixmap
@@ -151,7 +151,7 @@ class GroupViewDialog(QDialog):
     def _build_table(self) -> QTableWidget:
         table = QTableWidget(0, 7)
         self.table = table
-        table.setHorizontalHeaderLabels(["", "", "Product", "Site", "Price", "Change", "30-day low"])
+        table.setHorizontalHeaderLabels(["", "", "Product", "Site", "Price", change_header(), "30-day low"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)

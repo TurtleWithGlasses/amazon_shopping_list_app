@@ -386,6 +386,36 @@ def recent_history(since) -> dict:
     return result
 
 
+@_resilient
+def prices_at(cutoffs: dict) -> dict:
+    """Each product's price as of each cutoff (the latest point at or before it),
+    e.g. {'1w': {product_id: price}, …}. Products with no point that old are
+    absent. One RPC (`public.prices_at`, see supabase/schema.sql) that uses the
+    (product_id, captured_at) index — instead of downloading months of history.
+    Paginated in case products × cutoffs exceeds the 1000-row response cap."""
+    keys = list(cutoffs)
+    if not keys:
+        return {}
+    payload = {"cutoffs": [cutoffs[k].isoformat() for k in keys]}
+    client = get_client()
+    result: dict = {k: {} for k in keys}
+    size, start = 1000, 0
+    while True:
+        rows = (
+            client.rpc("prices_at", payload)
+            .range(start, start + size - 1)
+            .execute().data
+        ) or []
+        for r in rows:
+            idx = int(r["idx"]) - 1  # 1-based ordinality of the cutoff
+            if 0 <= idx < len(keys) and r.get("price") is not None:
+                result[keys[idx]][r["product_id"]] = float(r["price"])
+        if len(rows) < size:
+            break
+        start += size
+    return result
+
+
 # --- groups (Phase 34) ----------------------------------------------------
 
 @dataclass

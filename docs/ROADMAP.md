@@ -525,11 +525,30 @@ While any refresh runs, those buttons become a red **Stop (done/total)** wired t
 the main window's Stop; a Stop also rebuilds an open group/cart view. The red
 Stop style now lives in [ui/theme.py](../ui/theme.py) (`STOP_BUTTON_QSS`).
 
+### Phase 48 — Change period selector + Graph in the cart (v0.21.0)
+Clicking the **Change ▾** header opens a menu: **Last change / 1 week / 1 month /
+3 months / 6 months / 1 year**, plus sort (biggest drop / rise first, back to
+manual order). The choice is remembered (`change_period`) and the group view and
+cart follow it, so all three still show the same value; the header shows the
+period, e.g. "Change (1M)". A period compares the current price with the latest
+history point at or before *now − N days*; products tracked for less than that
+show "—", an unchanged price shows a grey "0.0%". Cost stays flat: one batched
+`repo.prices_at(cutoffs)` call fetches all five periods' base prices at startup
+and after each batch refresh and caches them in
+[ui/change_cell.py](../ui/change_cell.py) — switching periods / sorting never
+queries (~23 ms to build all six periods × 200 cells). Locally it's one indexed
+SQL query per cutoff; on Supabase it's the `public.prices_at(timestamptz[])`
+function in [supabase/schema.sql](../supabase/schema.sql) (a lateral
+latest-point lookup on `price_history_product_idx`, run as the caller so RLS
+applies) — **existing projects must run that SQL once**; until then the periods
+show "—" and "Last" keeps working. Also a **Graph** button on each cart row (the
+main window's `_show_graph`, opened over the cart).
+
 ---
 
 ## Upcoming
 
-No numbered phases queued — the planned set (through Phase 47) is shipped.
+No numbered phases queued — the planned set (through Phase 48) is shipped.
 Candidate next work lives under **Known follow-ups / tech debt** below.
 
 *Deferred:* Phase 21 Part D (persistent browser reuse) — keep one headless Chrome

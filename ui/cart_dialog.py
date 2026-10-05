@@ -24,13 +24,13 @@ from PySide6.QtWidgets import (
 
 from core import datastore as repo
 from core.currency import normalize_currency
-from ui.change_cell import change_item
+from ui.change_cell import change_header, change_item
 from ui.formatting import format_price
 from ui.logos import _domain_key, logo_pixmap
 from ui.theme import STOP_BUTTON_QSS, link_color
 
 (_COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_CHANGE, _COL_QTY, _COL_TOTAL,
- _COL_REFRESH, _COL_EDIT, _COL_REMOVE, _COL_DELETE) = range(11)
+ _COL_REFRESH, _COL_GRAPH, _COL_EDIT, _COL_REMOVE, _COL_DELETE) = range(12)
 _UP_COLOR = "#cc3b3b"    # price rose (buyer's view)
 _DOWN_COLOR = "#2e9e44"  # price fell
 
@@ -41,17 +41,18 @@ def _site_name(url: str) -> str:
 
 class CartDialog(QDialog):
     def __init__(self, parent=None, on_changed=None, on_refresh=None, on_edit=None,
-                 on_refresh_many=None, on_stop=None):
+                 on_refresh_many=None, on_stop=None, on_graph=None):
         super().__init__(parent)
         self._on_changed = on_changed  # called after a delete so the caller refreshes
         self._on_refresh = on_refresh  # re-scrape one product (main window handler)
         self._on_edit = on_edit        # edit name / URL / target (main window handler)
         self._on_refresh_many = on_refresh_many  # refresh a list of products as one batch
         self._on_stop = on_stop        # stop the running refresh (main window)
+        self._on_graph = on_graph      # open a product's price graph (main window)
         self._refreshing = False       # pushed by the main window (set_refresh_state)
         self.products = []
         self.setWindowTitle("Shopping cart")
-        self.resize(1170, 560)
+        self.resize(1270, 560)
         layout = QVBoxLayout(self)
 
         self._intro = QLabel()
@@ -59,9 +60,9 @@ class CartDialog(QDialog):
         self._intro.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._intro)
 
-        self.table = QTableWidget(0, 11)
+        self.table = QTableWidget(0, 12)
         self.table.setHorizontalHeaderLabels(
-            ["", "Product", "Site", "Unit price", "Change", "Qty", "Line total", "", "", "", ""]
+            ["", "Product", "Site", "Unit price", change_header(), "Qty", "Line total", "", "", "", "", ""]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -76,6 +77,7 @@ class CartDialog(QDialog):
         self.table.setColumnWidth(_COL_QTY, 80)
         self.table.setColumnWidth(_COL_TOTAL, 130)
         self.table.setColumnWidth(_COL_REFRESH, 90)
+        self.table.setColumnWidth(_COL_GRAPH, 90)
         self.table.setColumnWidth(_COL_EDIT, 90)
         self.table.setColumnWidth(_COL_REMOVE, 90)
         self.table.setColumnWidth(_COL_DELETE, 90)
@@ -182,6 +184,12 @@ class CartDialog(QDialog):
         refresh.clicked.connect(partial(self._refresh, product.id))
         self.table.setCellWidget(row, _COL_REFRESH, refresh)
 
+        graph = QPushButton("Graph")
+        graph.setToolTip("Show this product's price history")
+        graph.clicked.connect(partial(self._graph, product.id))
+        graph.setEnabled(self._on_graph is not None)
+        self.table.setCellWidget(row, _COL_GRAPH, graph)
+
         edit = QPushButton("Edit")
         edit.setToolTip("Edit the product's name, link, or target price")
         edit.clicked.connect(partial(self._edit, product.id))
@@ -277,6 +285,11 @@ class CartDialog(QDialog):
         window reloads the open cart (reload_prices) so the price updates here."""
         if self._on_refresh is not None:
             self._on_refresh(product_id)
+
+    def _graph(self, product_id) -> None:
+        """Open the product's price graph on top of the cart."""
+        if self._on_graph is not None:
+            self._on_graph(product_id, parent=self)
 
     def _edit(self, product_id) -> None:
         """Open the main window's edit dialog over the cart, then rebuild so a

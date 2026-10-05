@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 from urllib.parse import quote_plus, urlparse
 
-from PySide6.QtCore import QSettings, Qt, QThreadPool, QTimer, QUrl
+from PySide6.QtCore import QPoint, QSettings, Qt, QThreadPool, QTimer, QUrl
 from PySide6.QtGui import (
     QAction, QActionGroup, QColor, QDesktopServices, QKeySequence, QPalette, QShortcut,
 )
@@ -48,7 +48,17 @@ from services.stock import OUT_OF_STOCK, classify_stock
 from services.telegram import TelegramNotifier
 from services.updater import DownloadTask, UpdateCheckTask
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
-from ui.change_cell import change_item, price_change_pct
+from ui.change_cell import (
+    DEFAULT_PERIOD,
+    PERIODS,
+    change_header,
+    change_item,
+    current_period,
+    period_cutoffs,
+    price_change_pct,
+    set_base_prices,
+    set_period,
+)
 from ui.changes_dialog import StartupChangesDialog
 from ui.edit_dialog import EditProductDialog
 from ui.graph_dialog import GraphDialog
@@ -155,12 +165,14 @@ class MainWindow(QMainWindow):
         self._tray_stop_action = None
         self._notif_log = NotificationLog(notifications_path())  # in-app bell history
 
+        set_period(self._settings.value("change_period", DEFAULT_PERIOD))  # Change column
         self._build_menu()
         QShortcut(QKeySequence(Qt.Key.Key_Escape), self, self._stop_refresh)  # Esc = Stop
         self._build_central()
         self._build_tray()
         self._restore_layout()
         self._recompute_trends()  # fill the trend cache before the first render
+        self._recompute_period_prices()  # …and the Change column's past prices
         self.reload()
         self._update_bell()  # reflect any unread notifications persisted last session
         self._start_timers()
@@ -247,7 +259,7 @@ class MainWindow(QMainWindow):
         # Table
         self.table = QTableWidget(0, COLUMN_COUNT)
         self.table.setHorizontalHeaderLabels(
-            ["#", "", "", "", "Product", "Price", "Change", "Trend", "Stock",
+            ["#", "", "", "", "Product", "Price", self._change_header_text(), "Trend", "Stock",
              "Last checked", "Status", "Actions"]
         )
         self.table.verticalHeader().setVisible(False)
@@ -263,7 +275,7 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         for col, width in (
             (COL_NUM, 38), (COL_MOVE, 84), (COL_LOGO, 84), (COL_IMAGE, 74),
-            (COL_NAME, 320), (COL_PRICE, 110), (COL_CHANGE, 90), (COL_TREND, 64), (COL_STOCK, 150),
+            (COL_NAME, 320), (COL_PRICE, 110), (COL_CHANGE, 110), (COL_TREND, 64), (COL_STOCK, 150),
             (COL_CHECKED, 140), (COL_STATUS, 64), (COL_ACTIONS, 340),
         ):
             self.table.setColumnWidth(col, width)
@@ -300,6 +312,17 @@ class MainWindow(QMainWindow):
         except Exception:
             return  # leave the previous cache; trends just won't update this time
         self._trend_cache = {pid: price_trend(points) for pid, points in history.items()}
+
+    def _recompute_period_prices(self) -> None:
+        """Fetch every product's price 1W / 1M / 3M / 6M / 1Y ago in one batched
+        query and cache it for the Change column — so switching the period,
+        sorting and rebuilding tables never query. Run at startup and after
+        each batch refresh (a single-row refresh doesn't move those old prices)."""
+        try:
+            prices = repo.prices_at(period_cutoffs(datetime.now(timezone.utc)))
+        except Exception:
+            return  # keep the previous cache (e.g. cloud function not installed yet)
+        set_base_prices(prices)
 
     def reload(self) -> None:
         # Preserve the scroll position: rebuilding the table resets the
@@ -348,6 +371,9 @@ class MainWindow(QMainWindow):
         return [p for _, p in present] + missing  # missing values always last
 
     def _on_header_clicked(self, col: int) -> None:
+        if col == COL_CHANGE:
+            self._show_change_menu()  # pick the period / sort from a menu
+            return
         if col not in self._SORTABLE_COLUMNS:
             return
         if self._sort_column != col:
@@ -357,6 +383,47 @@ class MainWindow(QMainWindow):
             self._sort_order = Qt.SortOrder.DescendingOrder
         else:
             self._sort_column = None  # third click → back to manual order
+        self._apply_sort_indicator()
+        self.reload()
+        self._save_layout()
+
+    @staticmethod
+    def _change_header_text() -> str:
+        return f"{change_header()} ▾"  # ▾ hints that clicking opens a menu
+
+    def _show_change_menu(self) -> None:
+        """Menu under the Change header: which period to compare against, plus
+        sorting (a plain click can't cycle sort here — it opens this menu)."""
+        menu = QMenu(self)
+        selected = current_period()
+        for key, label, _tag, _days in PERIODS:
+            action = menu.addAction(label, partial(self._set_change_period, key))
+            action.setCheckable(True)
+            action.setChecked(key == selected)
+        menu.addSeparator()
+        menu.addAction("Sort: biggest drop first",
+                       partial(self._sort_by_change, Qt.SortOrder.AscendingOrder))
+        menu.addAction("Sort: biggest rise first",
+                       partial(self._sort_by_change, Qt.SortOrder.DescendingOrder))
+        if self._sort_column == COL_CHANGE:
+            menu.addAction("Back to manual order", partial(self._sort_by_change, None))
+        header = self.table.horizontalHeader()
+        pos = QPoint(header.sectionViewportPosition(COL_CHANGE), header.height())
+        menu.exec(header.mapToGlobal(pos))
+
+    def _set_change_period(self, key: str) -> None:
+        set_period(key)
+        self._settings.setValue("change_period", current_period())
+        header_item = self.table.horizontalHeaderItem(COL_CHANGE)
+        if header_item is not None:
+            header_item.setText(self._change_header_text())
+        self.reload()  # re-sorts too, if sorted by Change
+
+    def _sort_by_change(self, order) -> None:
+        if order is None:
+            self._sort_column = None
+        else:
+            self._sort_column, self._sort_order = COL_CHANGE, order
         self._apply_sort_indicator()
         self.reload()
         self._save_layout()
@@ -1035,6 +1102,7 @@ class MainWindow(QMainWindow):
     def _finalize_refresh(self) -> None:
         self._update_refresh_ui()  # back to Refresh All
         self._recompute_trends()  # new history points may change the trends
+        self._recompute_period_prices()
         self.reload()
         self._refresh_cart_if_open()   # reflect new prices in an open cart
         self._refresh_group_if_open()  # …and in an open group view
@@ -1567,7 +1635,7 @@ class MainWindow(QMainWindow):
         self._cart_dialog = CartDialog(
             self, on_changed=self.reload, on_refresh=self._refresh_one,
             on_edit=self._edit_product, on_refresh_many=self._refresh_products,
-            on_stop=self._stop_refresh,
+            on_stop=self._stop_refresh, on_graph=self._show_graph,
         )
         self._sync_dialog_refresh_state()
         try:
@@ -1722,10 +1790,11 @@ class MainWindow(QMainWindow):
         if url:
             QDesktopServices.openUrl(QUrl(url))
 
-    def _show_graph(self, product_id: int) -> None:
+    def _show_graph(self, product_id: int, parent=None) -> None:
+        """`parent` lets another window (e.g. the cart) host the graph on top."""
         product = repo.get_product(product_id)
         if product is not None:
-            GraphDialog(product, parent=self).exec()
+            GraphDialog(product, parent=parent or self).exec()
 
     def _edit_product(self, product_id: int, parent=None) -> None:
         """Edit name / URL / target price. `parent` lets another window (e.g. the
