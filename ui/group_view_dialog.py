@@ -7,6 +7,7 @@ from PySide6.QtCore import QPoint, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QComboBox,
     QDialog,
     QHBoxLayout,
     QHeaderView,
@@ -19,9 +20,11 @@ from PySide6.QtWidgets import (
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
+    QWidget,
 )
 
 from core import datastore as repo
+from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS, since_for
 from ui.change_cell import add_period_actions, change_header, change_item
 from ui.formatting import format_price
 from ui.graph_style import LINE_COLORS, style_plot
@@ -53,6 +56,7 @@ class GroupViewDialog(QDialog):
         self._on_period = on_period    # change the Change column's period (main window)
         self._refresh_state = (False, "")  # (refreshing, "done/total"), pushed by main
         self.refresh_button = None
+        self._timescale = DEFAULT_TIMESCALE  # graph window; kept across rebuilds
         self.setWindowTitle(f"Group — {group_name}")
         self.resize(860, 680)
         self._layout = QVBoxLayout(self)
@@ -106,7 +110,7 @@ class GroupViewDialog(QDialog):
 
         splitter = QSplitter(Qt.Orientation.Vertical)
         splitter.addWidget(self._build_table())
-        splitter.addWidget(self._build_graph())
+        splitter.addWidget(self._build_graph_panel())
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         splitter.setSizes([230, 380])
@@ -327,6 +331,33 @@ class GroupViewDialog(QDialog):
     def _fmt_time(ts: float) -> str:
         return datetime.fromtimestamp(ts).strftime("%d %b %Y %H:%M")
 
+    def _build_graph_panel(self) -> QWidget:
+        """Timescale dropdown (same options as a product's graph) above the
+        combined graph; changing it redraws only the graph."""
+        panel = QWidget()
+        box = QVBoxLayout(panel)
+        box.setContentsMargins(0, 6, 0, 0)
+        controls = QHBoxLayout()
+        controls.addWidget(QLabel("Timescale:"))
+        self.timescale = QComboBox()
+        self.timescale.addItems(TIMESCALE_LABELS)
+        self.timescale.setCurrentText(self._timescale)
+        self.timescale.currentTextChanged.connect(self._on_timescale_changed)
+        controls.addWidget(self.timescale)
+        controls.addStretch(1)
+        box.addLayout(controls)
+        self._graph_box = box
+        self._graph = self._build_graph()
+        box.addWidget(self._graph, 1)
+        return panel
+
+    def _on_timescale_changed(self, label: str) -> None:
+        self._timescale = label
+        old = self._graph
+        self._graph = self._build_graph()
+        self._graph_box.replaceWidget(old, self._graph)
+        old.deleteLater()
+
     def _build_graph(self):
         axis = pg.DateAxisItem(orientation="bottom")
         plot = pg.PlotWidget(axisItems={"bottom": axis})
@@ -335,9 +366,11 @@ class GroupViewDialog(QDialog):
         plot.addLegend(offset=(10, 10), labelTextColor=t["text"])
 
         plotted = False
+        since = since_for(self._timescale)
         for product in self.members:
             points = [(h.captured_at.replace(tzinfo=timezone.utc).timestamp(), h.price)
-                      for h in repo.get_price_history(product.id) if h.price is not None]
+                      for h in repo.get_price_history(product.id, since=since)
+                      if h.price is not None]
             if not points:
                 continue
             xs = [t for t, _ in points]
@@ -362,4 +395,6 @@ class GroupViewDialog(QDialog):
 
         if plotted:
             return plot
-        return QLabel("No price history to chart yet.")
+        empty = QLabel("No price history for this timescale yet.")
+        empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        return empty

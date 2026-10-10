@@ -550,6 +550,13 @@ view and the cart (shared `add_period_actions` helper in
 main window's `_set_change_period`, so it's saved and the main table, group view
 and cart all switch together.
 
+**v0.21.2:** the group view's combined graph gets a **Timescale** dropdown
+(1 Day / 1 Week / 1 Month / 3 Months / All time — the same options as a
+product's graph, from `services/timescales.py`). Changing it redraws only the
+graph with history since that cutoff; the choice survives the view's rebuilds
+(refresh / edit / move) while it's open, and less history is loaded for short
+timescales.
+
 ---
 
 ## Upcoming
