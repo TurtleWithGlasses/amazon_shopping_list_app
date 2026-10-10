@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from functools import partial
 
 import pyqtgraph as pg
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QPoint, Qt, QUrl
 from PySide6.QtGui import QColor, QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 )
 
 from core import datastore as repo
-from ui.change_cell import change_header, change_item
+from ui.change_cell import add_period_actions, change_header, change_item
 from ui.formatting import format_price
 from ui.graph_style import LINE_COLORS, style_plot
 from ui.logos import _domain_key, logo_pixmap
@@ -40,7 +40,8 @@ def _site_name(url: str) -> str:
 
 class GroupViewDialog(QDialog):
     def __init__(self, group_id: int, group_name: str, parent=None, on_changed=None,
-                 on_refresh=None, on_edit=None, on_refresh_many=None, on_stop=None):
+                 on_refresh=None, on_edit=None, on_refresh_many=None, on_stop=None,
+                 on_period=None):
         super().__init__(parent)
         self.group_id = group_id
         self.group_name = group_name
@@ -49,6 +50,7 @@ class GroupViewDialog(QDialog):
         self._on_edit = on_edit        # edit name / URL / target (main window handler)
         self._on_refresh_many = on_refresh_many  # refresh a list of products as one batch
         self._on_stop = on_stop        # stop the running refresh (main window)
+        self._on_period = on_period    # change the Change column's period (main window)
         self._refresh_state = (False, "")  # (refreshing, "done/total"), pushed by main
         self.refresh_button = None
         self.setWindowTitle(f"Group — {group_name}")
@@ -151,7 +153,7 @@ class GroupViewDialog(QDialog):
     def _build_table(self) -> QTableWidget:
         table = QTableWidget(0, 7)
         self.table = table
-        table.setHorizontalHeaderLabels(["", "", "Product", "Site", "Price", change_header(), "30-day low"])
+        table.setHorizontalHeaderLabels(["", "", "Product", "Site", "Price", self._change_header_text(), "30-day low"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
@@ -165,6 +167,7 @@ class GroupViewDialog(QDialog):
         table.setColumnWidth(_COL_CHANGE, 90)
         table.setColumnWidth(_COL_LOW, 130)
         table.cellClicked.connect(self._open_link)
+        table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         table.customContextMenuRequested.connect(self._show_row_menu)
 
@@ -207,6 +210,27 @@ class GroupViewDialog(QDialog):
             low_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, _COL_LOW, low_item)
         return table
+
+    # --- Change period (shared with the main table and cart) ------------------
+
+    def _change_header_text(self) -> str:
+        # ▾ hints that clicking opens the period menu (only when it can)
+        return f"{change_header()} ▾" if self._on_period is not None else change_header()
+
+    def _on_header_clicked(self, col: int) -> None:
+        if col != _COL_CHANGE or self._on_period is None:
+            return
+        menu = QMenu(self)
+        add_period_actions(menu, self._set_period)
+        header = self.table.horizontalHeader()
+        pos = QPoint(header.sectionViewportPosition(_COL_CHANGE), header.height())
+        menu.exec(header.mapToGlobal(pos))
+
+    def _set_period(self, key: str) -> None:
+        """The main window applies it everywhere (saved, main table + cart follow);
+        then rebuild this view with the new values and header."""
+        self._on_period(key)
+        self._populate()
 
     def _open_link(self, row: int, col: int) -> None:
         if col != _COL_NAME:

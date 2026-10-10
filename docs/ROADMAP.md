@@ -544,6 +544,12 @@ applies) — **existing projects must run that SQL once**; until then the period
 show "—" and "Last" keeps working. Also a **Graph** button on each cart row (the
 main window's `_show_graph`, opened over the cart).
 
+**v0.21.1:** the period menu also opens from the **Change ▾** header in the group
+view and the cart (shared `add_period_actions` helper in
+[ui/change_cell.py](../ui/change_cell.py)). A choice made there goes through the
+main window's `_set_change_period`, so it's saved and the main table, group view
+and cart all switch together.
+
 ---
 
 ## Upcoming

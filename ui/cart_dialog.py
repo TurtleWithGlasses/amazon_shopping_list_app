@@ -6,7 +6,7 @@ Quantities are editable inline and persist immediately.
 """
 from functools import partial
 
-from PySide6.QtCore import Qt, QUrl
+from PySide6.QtCore import QPoint, Qt, QUrl
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QAbstractItemView,
@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QMessageBox,
     QPushButton,
     QSpinBox,
@@ -24,7 +25,7 @@ from PySide6.QtWidgets import (
 
 from core import datastore as repo
 from core.currency import normalize_currency
-from ui.change_cell import change_header, change_item
+from ui.change_cell import add_period_actions, change_header, change_item
 from ui.formatting import format_price
 from ui.logos import _domain_key, logo_pixmap
 from ui.theme import STOP_BUTTON_QSS, link_color
@@ -41,7 +42,7 @@ def _site_name(url: str) -> str:
 
 class CartDialog(QDialog):
     def __init__(self, parent=None, on_changed=None, on_refresh=None, on_edit=None,
-                 on_refresh_many=None, on_stop=None, on_graph=None):
+                 on_refresh_many=None, on_stop=None, on_graph=None, on_period=None):
         super().__init__(parent)
         self._on_changed = on_changed  # called after a delete so the caller refreshes
         self._on_refresh = on_refresh  # re-scrape one product (main window handler)
@@ -49,6 +50,7 @@ class CartDialog(QDialog):
         self._on_refresh_many = on_refresh_many  # refresh a list of products as one batch
         self._on_stop = on_stop        # stop the running refresh (main window)
         self._on_graph = on_graph      # open a product's price graph (main window)
+        self._on_period = on_period    # change the Change column's period (main window)
         self._refreshing = False       # pushed by the main window (set_refresh_state)
         self.products = []
         self.setWindowTitle("Shopping cart")
@@ -62,7 +64,7 @@ class CartDialog(QDialog):
 
         self.table = QTableWidget(0, 12)
         self.table.setHorizontalHeaderLabels(
-            ["", "Product", "Site", "Unit price", change_header(), "Qty", "Line total", "", "", "", "", ""]
+            ["", "Product", "Site", "Unit price", self._change_header_text(), "Qty", "Line total", "", "", "", "", ""]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -82,6 +84,7 @@ class CartDialog(QDialog):
         self.table.setColumnWidth(_COL_REMOVE, 90)
         self.table.setColumnWidth(_COL_DELETE, 90)
         self.table.cellClicked.connect(self._open_link)
+        self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         layout.addWidget(self.table, 1)
 
         bottom = QHBoxLayout()
@@ -329,6 +332,30 @@ class CartDialog(QDialog):
         if confirm == QMessageBox.StandardButton.Yes:
             repo.clear_cart()
             self._reload()
+
+    # --- Change period (shared with the main table and group view) ------------
+
+    def _change_header_text(self) -> str:
+        # ▾ hints that clicking opens the period menu (only when it can)
+        return f"{change_header()} ▾" if self._on_period is not None else change_header()
+
+    def _on_header_clicked(self, col: int) -> None:
+        if col != _COL_CHANGE or self._on_period is None:
+            return
+        menu = QMenu(self)
+        add_period_actions(menu, self._set_period)
+        header = self.table.horizontalHeader()
+        pos = QPoint(header.sectionViewportPosition(_COL_CHANGE), header.height())
+        menu.exec(header.mapToGlobal(pos))
+
+    def _set_period(self, key: str) -> None:
+        """The main window applies it everywhere (saved, main table + groups
+        follow); then refresh this header and the rows (quantities persist)."""
+        self._on_period(key)
+        header_item = self.table.horizontalHeaderItem(_COL_CHANGE)
+        if header_item is not None:
+            header_item.setText(self._change_header_text())
+        self._reload()
 
     def _open_link(self, row: int, col: int) -> None:
         if col != _COL_NAME:

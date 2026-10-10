@@ -50,7 +50,7 @@ from services.updater import DownloadTask, UpdateCheckTask
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.change_cell import (
     DEFAULT_PERIOD,
-    PERIODS,
+    add_period_actions,
     change_header,
     change_item,
     current_period,
@@ -395,11 +395,7 @@ class MainWindow(QMainWindow):
         """Menu under the Change header: which period to compare against, plus
         sorting (a plain click can't cycle sort here — it opens this menu)."""
         menu = QMenu(self)
-        selected = current_period()
-        for key, label, _tag, _days in PERIODS:
-            action = menu.addAction(label, partial(self._set_change_period, key))
-            action.setCheckable(True)
-            action.setChecked(key == selected)
+        add_period_actions(menu, self._set_change_period)
         menu.addSeparator()
         menu.addAction("Sort: biggest drop first",
                        partial(self._sort_by_change, Qt.SortOrder.AscendingOrder))
@@ -1600,7 +1596,7 @@ class MainWindow(QMainWindow):
             group_id, group_name, parent=self,
             on_changed=self.reload, on_refresh=self._refresh_one,
             on_edit=self._edit_product, on_refresh_many=self._refresh_products,
-            on_stop=self._stop_refresh,
+            on_stop=self._stop_refresh, on_period=self._set_change_period,
         )
         self._sync_dialog_refresh_state()
         try:
@@ -1636,6 +1632,7 @@ class MainWindow(QMainWindow):
             self, on_changed=self.reload, on_refresh=self._refresh_one,
             on_edit=self._edit_product, on_refresh_many=self._refresh_products,
             on_stop=self._stop_refresh, on_graph=self._show_graph,
+            on_period=self._set_change_period,
         )
         self._sync_dialog_refresh_state()
         try:

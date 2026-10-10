@@ -12,7 +12,8 @@ main table's Change header and held here as module state.
   rebuilding tables never hit the database.
 """
 from datetime import datetime, timedelta
-from typing import Dict, Optional
+from functools import partial
+from typing import Callable, Dict, Optional
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -64,6 +65,15 @@ def change_header() -> str:
     """Column title for the selected period: 'Change' or e.g. 'Change (1M)'."""
     tag = _BY_KEY[_period][1]
     return f"Change ({tag})" if tag else "Change"
+
+
+def add_period_actions(menu, on_select: Callable[[str], None]) -> None:
+    """Add the checkable period choices (Last change … 1 year) to a QMenu, the
+    selected one ticked. Used by the main table and the group view headers."""
+    for key, label, _tag, _days in PERIODS:
+        action = menu.addAction(label, partial(on_select, key))
+        action.setCheckable(True)
+        action.setChecked(key == _period)
 
 
 def period_label(key: Optional[str] = None) -> str:
