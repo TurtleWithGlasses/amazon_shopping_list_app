@@ -322,7 +322,11 @@ class MainWindow(QMainWindow):
             prices = repo.prices_at(period_cutoffs(datetime.now(timezone.utc)))
         except Exception:
             return  # keep the previous cache (e.g. cloud function not installed yet)
-        set_base_prices(prices)
+        try:
+            first = repo.first_prices()  # fallback for products younger than a period
+        except Exception:
+            first = None  # keep the previous first-price cache
+        set_base_prices(prices, first)
 
     def reload(self) -> None:
         # Preserve the scroll position: rebuilding the table resets the

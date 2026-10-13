@@ -557,6 +557,16 @@ graph with history since that cutoff; the choice survives the view's rebuilds
 (refresh / edit / move) while it's open, and less history is loaded for short
 timescales.
 
+**v0.21.3:** Change periods are now *bands*, not exact ages. A product first
+tracked within a period's band (1W: 0–7 days, 1M: 7 days–1 month, 3M: 1–3 months,
+6M: 3–6 months, 1Y: 6–12 months) has no price from exactly N days ago, so it falls
+back to its first tracked price — e.g. a product added 4–5 months ago now shows a
+6M change instead of "—". Younger products still show "—" (a shorter period covers
+them). Tooltips say which base was used ("N ago: …" vs "Since tracking began
+(date): …"). First prices come from one extra cached query, `repo.first_prices()`
+(local: one SQL query; cloud: products with an embedded, ordered, limit-1
+`price_history` — no new SQL function).
+
 ---
 
 ## Upcoming

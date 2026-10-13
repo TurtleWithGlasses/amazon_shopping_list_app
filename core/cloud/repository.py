@@ -416,6 +416,39 @@ def prices_at(cutoffs: dict) -> dict:
     return result
 
 
+@_resilient
+def first_prices() -> dict:
+    """Each product's oldest priced history point: {product_id: (captured_at, price)}.
+    Lets the Change column fall back to "since tracking began" for products
+    younger than the selected period. One request: each product row embeds just
+    its first history point (PostgREST orders + limits the embedded rows, using
+    the (product_id, captured_at) index) — no new SQL function needed."""
+    client = get_client()
+    result: dict = {}
+    size, start = 1000, 0
+    while True:
+        rows = (
+            client.table("products")
+            .select("id,price_history(price,captured_at)")
+            .is_("deleted_at", "null")
+            .filter("price_history.price", "not.is", "null")
+            .order("captured_at", foreign_table="price_history")
+            .limit(1, foreign_table="price_history")
+            .order("id")
+            .range(start, start + size - 1)
+            .execute().data
+        ) or []
+        for r in rows:
+            points = r.get("price_history") or []
+            if points and points[0].get("price") is not None:
+                result[r["id"]] = (_parse_dt(points[0].get("captured_at")),
+                                   float(points[0]["price"]))
+        if len(rows) < size:
+            break
+        start += size
+    return result
+
+
 # --- groups (Phase 34) ----------------------------------------------------
 
 @dataclass

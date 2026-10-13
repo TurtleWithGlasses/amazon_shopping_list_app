@@ -293,6 +293,26 @@ def prices_at(cutoffs: dict) -> dict:
     return result
 
 
+def first_prices() -> dict:
+    """Each product's oldest priced history point: {product_id: (captured_at, price)}.
+    Lets the Change column fall back to "since tracking began" for products
+    younger than the selected period. One query."""
+    with session_scope() as session:
+        first = (
+            select(PriceHistory.product_id,
+                   func.min(PriceHistory.captured_at).label("ts"))
+            .where(PriceHistory.price.is_not(None))
+            .group_by(PriceHistory.product_id)
+            .subquery()
+        )
+        stmt = (
+            select(PriceHistory.product_id, PriceHistory.captured_at, PriceHistory.price)
+            .join(first, (PriceHistory.product_id == first.c.product_id)
+                  & (PriceHistory.captured_at == first.c.ts))
+        )
+        return {pid: (ts, price) for pid, ts, price in session.execute(stmt)}
+
+
 # --- groups (Phase 34) ----------------------------------------------------
 
 def create_group(name: str, user_id: Optional[int] = None) -> Group:
