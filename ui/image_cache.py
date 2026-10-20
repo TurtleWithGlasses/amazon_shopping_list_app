@@ -9,6 +9,7 @@ import hashlib
 
 from PySide6.QtCore import QObject, QRunnable, Qt, QThreadPool, Signal, Slot
 from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QLabel
 
 from core.paths import app_data_dir
 
@@ -97,3 +98,15 @@ class ImageLoader(QObject):
             ))
         except RuntimeError:
             pass  # the row (and its label) was rebuilt before the image arrived
+
+
+THUMB_SIZE = 44  # product thumbnail in the group view / cart rows (px)
+
+
+def thumbnail_label(loader: ImageLoader, product, size: int = THUMB_SIZE) -> QLabel:
+    """A centered QLabel that fills in with the product's image (cached on disk
+    and in the loader's memory; downloaded in the background if new)."""
+    label = QLabel()
+    label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    loader.load(getattr(product, "image_url", None), label, size)
+    return label

@@ -28,13 +28,15 @@ from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS, since_for
 from ui.change_cell import add_period_actions, change_header, change_item
 from ui.formatting import format_price
 from ui.graph_style import LINE_COLORS, style_plot
+from ui.image_cache import THUMB_SIZE, ImageLoader, thumbnail_label
 from ui.logos import _domain_key, logo_pixmap
 from ui.theme import STOP_BUTTON_QSS, link_color
 
 _CHEAPEST = QColor("#2e9e44")  # green: the lowest-priced member
 
 # columns
-_COL_SWATCH, _COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_CHANGE, _COL_LOW = range(7)
+(_COL_SWATCH, _COL_LOGO, _COL_IMAGE, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_CHANGE,
+ _COL_LOW) = range(8)
 
 
 def _site_name(url: str) -> str:
@@ -44,7 +46,7 @@ def _site_name(url: str) -> str:
 class GroupViewDialog(QDialog):
     def __init__(self, group_id: int, group_name: str, parent=None, on_changed=None,
                  on_refresh=None, on_edit=None, on_refresh_many=None, on_stop=None,
-                 on_period=None):
+                 on_period=None, images=None):
         super().__init__(parent)
         self.group_id = group_id
         self.group_name = group_name
@@ -54,11 +56,14 @@ class GroupViewDialog(QDialog):
         self._on_refresh_many = on_refresh_many  # refresh a list of products as one batch
         self._on_stop = on_stop        # stop the running refresh (main window)
         self._on_period = on_period    # change the Change column's period (main window)
+        # Product thumbnails: share the main window's loader (already-loaded
+        # images show instantly), or use our own when opened standalone.
+        self._images = images if images is not None else ImageLoader(self)
         self._refresh_state = (False, "")  # (refreshing, "done/total"), pushed by main
         self.refresh_button = None
         self._timescale = DEFAULT_TIMESCALE  # graph window; kept across rebuilds
         self.setWindowTitle(f"Group — {group_name}")
-        self.resize(860, 680)
+        self.resize(920, 680)
         self._layout = QVBoxLayout(self)
         self._populate()
 
@@ -155,17 +160,18 @@ class GroupViewDialog(QDialog):
     # --- members table -----------------------------------------------------
 
     def _build_table(self) -> QTableWidget:
-        table = QTableWidget(0, 7)
+        table = QTableWidget(0, 8)
         self.table = table
-        table.setHorizontalHeaderLabels(["", "", "Product", "Site", "Price", self._change_header_text(), "30-day low"])
+        table.setHorizontalHeaderLabels(["", "", "", "Product", "Site", "Price", self._change_header_text(), "30-day low"])
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        table.verticalHeader().setDefaultSectionSize(44)
+        table.verticalHeader().setDefaultSectionSize(THUMB_SIZE + 10)
         header = table.horizontalHeader()
         header.setSectionResizeMode(_COL_NAME, QHeaderView.ResizeMode.Stretch)
         table.setColumnWidth(_COL_SWATCH, 20)
         table.setColumnWidth(_COL_LOGO, 76)
+        table.setColumnWidth(_COL_IMAGE, THUMB_SIZE + 16)
         table.setColumnWidth(_COL_SITE, 110)
         table.setColumnWidth(_COL_PRICE, 130)
         table.setColumnWidth(_COL_CHANGE, 90)
@@ -191,6 +197,7 @@ class GroupViewDialog(QDialog):
             if pm is not None:
                 logo.setPixmap(pm)
             table.setCellWidget(row, _COL_LOGO, logo)
+            table.setCellWidget(row, _COL_IMAGE, thumbnail_label(self._images, product))
 
             name_item = QTableWidgetItem(("⭐ " if cheapest else "") + (product.name or product.url))
             name_item.setData(Qt.ItemDataRole.UserRole, product.url)

@@ -75,9 +75,9 @@ _DECREASE_COLOR = QColor("#2e9e44")  # green: price or stock went down
 _CHANGED_COLOR = QColor("#e8830c")   # orange: changed, direction indeterminate
 _PRICE_UP_COLOR = QColor("#cc3b3b")  # red: price rose (buyer's view; matches notifications)
 
-(COL_NUM, COL_MOVE, COL_LOGO, COL_IMAGE, COL_NAME, COL_PRICE, COL_CHANGE, COL_TREND,
- COL_STOCK, COL_CHECKED, COL_STATUS, COL_ACTIONS) = range(12)
-COLUMN_COUNT = 12
+(COL_NUM, COL_MOVE, COL_LOGO, COL_IMAGE, COL_NAME, COL_LIST, COL_PRICE, COL_CHANGE,
+ COL_TREND, COL_STOCK, COL_CHECKED, COL_STATUS, COL_ACTIONS) = range(13)
+COLUMN_COUNT = 13
 
 # Price-trend indicator (Phase 37): glyph, color, label by state name.
 _TREND_STYLES = {
@@ -134,6 +134,7 @@ class MainWindow(QMainWindow):
         self._row_for_product = {}     # product id -> table row index
         self._single_active = set()    # ids with a single-row refresh in flight
         self._trend_cache = {}         # product id -> (state, pct) over the window
+        self._group_names = {}         # product id -> [group names] (List column)
         self._really_quit = False
         self.logout_requested = False
         self._tray_available = False
@@ -259,7 +260,7 @@ class MainWindow(QMainWindow):
         # Table
         self.table = QTableWidget(0, COLUMN_COUNT)
         self.table.setHorizontalHeaderLabels(
-            ["#", "", "", "", "Product", "Price", self._change_header_text(), "Trend", "Stock",
+            ["#", "", "", "", "Product", "List", "Price", self._change_header_text(), "Trend", "Stock",
              "Last checked", "Status", "Actions"]
         )
         self.table.verticalHeader().setVisible(False)
@@ -275,7 +276,7 @@ class MainWindow(QMainWindow):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
         for col, width in (
             (COL_NUM, 38), (COL_MOVE, 84), (COL_LOGO, 84), (COL_IMAGE, 74),
-            (COL_NAME, 320), (COL_PRICE, 110), (COL_CHANGE, 110), (COL_TREND, 64), (COL_STOCK, 150),
+            (COL_NAME, 320), (COL_LIST, 140), (COL_PRICE, 110), (COL_CHANGE, 110), (COL_TREND, 64), (COL_STOCK, 150),
             (COL_CHECKED, 140), (COL_STATUS, 64), (COL_ACTIONS, 340),
         ):
             self.table.setColumnWidth(col, width)
@@ -332,6 +333,7 @@ class MainWindow(QMainWindow):
         # Preserve the scroll position: rebuilding the table resets the
         # scrollbar to the top, which yanks the view up after Add/refresh/move.
         scroll = self.table.verticalScrollBar().value()
+        self._load_group_names()  # before sorting: the List column can be the sort key
         products = self._sort_products(repo.list_products())
         self.table.setRowCount(0)
         self._status_cells = {}
@@ -345,13 +347,24 @@ class MainWindow(QMainWindow):
         QTimer.singleShot(0, lambda: self.table.verticalScrollBar().setValue(scroll))
         self.statusBar().showMessage(f"{len(products)} product(s) tracked")
 
+    def _load_group_names(self) -> None:
+        """One batched query for the List column (which groups each product is in)."""
+        try:
+            self._group_names = repo.group_names_by_product()
+        except Exception:
+            pass  # keep the previous names; the column just won't update this time
+
     # --- sorting -----------------------------------------------------------
 
-    _SORTABLE_COLUMNS = (COL_NAME, COL_PRICE, COL_CHANGE, COL_TREND, COL_STOCK, COL_CHECKED)
+    _SORTABLE_COLUMNS = (COL_NAME, COL_LIST, COL_PRICE, COL_CHANGE, COL_TREND, COL_STOCK,
+                         COL_CHECKED)
 
     def _sort_value(self, product, col):
         if col == COL_NAME:
             return (product.name or product.url or "").casefold()
+        if col == COL_LIST:
+            names = self._group_names.get(product.id)
+            return ", ".join(names).casefold() if names else None  # ungrouped last
         if col == COL_PRICE:
             return product.last_price
         if col == COL_CHANGE:
@@ -460,6 +473,13 @@ class MainWindow(QMainWindow):
             tips.append(f"Target: {format_price(target, product.currency)}")
             if self._target_met(product):
                 text += "  🎯"  # current price is at/below the user's target
+        names = self._group_names.get(product.id) or []
+        list_item = QTableWidgetItem(", ".join(names))
+        list_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
+        if names:
+            list_item.setToolTip("Groups: " + ", ".join(names))
+        self.table.setItem(row, COL_LIST, list_item)
+
         price_item = QTableWidgetItem(text)
         price_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
         if product.price_changed and product.prev_price is not None:
@@ -1204,6 +1224,7 @@ class MainWindow(QMainWindow):
         ).exec()
         self._notif_log.mark_all_read()  # opening = seen
         self._update_bell()
+        self.reload()  # products may have been added to groups there (List column)
 
     def _notification_row(self, entry) -> dict:
         ts = entry.get("ts")
@@ -1434,7 +1455,7 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, self.showMaximized)
         # _v2: layout defaults changed (taller rows, wider columns), so old saved
         # column widths are intentionally ignored.
-        header_state = self._settings.value("header_state_v9")
+        header_state = self._settings.value("header_state_v10")
         if header_state is not None:
             self.table.horizontalHeader().restoreState(header_state)
         close_to_tray = self._settings.value("close_to_tray", True, type=bool)
@@ -1469,7 +1490,7 @@ class MainWindow(QMainWindow):
     def _save_layout(self) -> None:
         self._settings.setValue("geometry", self.saveGeometry())
         self._settings.setValue("window_maximized", self.isMaximized() or self.isFullScreen())
-        self._settings.setValue("header_state_v9", self.table.horizontalHeader().saveState())
+        self._settings.setValue("header_state_v10", self.table.horizontalHeader().saveState())
         self._settings.setValue("close_to_tray", self.tray_checkbox.isChecked())
         self._settings.setValue("sort_column", -1 if self._sort_column is None else self._sort_column)
         self._settings.setValue("sort_order", self._sort_order.value)
@@ -1601,6 +1622,7 @@ class MainWindow(QMainWindow):
             on_changed=self.reload, on_refresh=self._refresh_one,
             on_edit=self._edit_product, on_refresh_many=self._refresh_products,
             on_stop=self._stop_refresh, on_period=self._set_change_period,
+            images=self._images,
         )
         self._sync_dialog_refresh_state()
         try:
@@ -1636,7 +1658,7 @@ class MainWindow(QMainWindow):
             self, on_changed=self.reload, on_refresh=self._refresh_one,
             on_edit=self._edit_product, on_refresh_many=self._refresh_products,
             on_stop=self._stop_refresh, on_graph=self._show_graph,
-            on_period=self._set_change_period,
+            on_period=self._set_change_period, images=self._images,
         )
         self._sync_dialog_refresh_state()
         try:
@@ -1729,6 +1751,7 @@ class MainWindow(QMainWindow):
 
     def _add_to_group(self, group_id, product_id) -> None:
         repo.add_to_group(group_id, product_id)
+        self.reload()  # List column
         self.statusBar().showMessage("Added to group")
 
     def _add_to_new_group(self, product_id) -> None:
@@ -1736,10 +1759,12 @@ class MainWindow(QMainWindow):
         if ok and name.strip():
             group = repo.create_group(name.strip())
             repo.add_to_group(group.id, product_id)
+            self.reload()  # List column
             self.statusBar().showMessage(f"Added to new group '{name.strip()}'")
 
     def _remove_from_group(self, group_id, product_id) -> None:
         repo.remove_from_group(group_id, product_id)
+        self.reload()  # List column
         self.statusBar().showMessage("Removed from group")
 
     def _open_settings(self) -> None:

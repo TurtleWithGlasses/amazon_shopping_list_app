@@ -27,11 +27,12 @@ from core import datastore as repo
 from core.currency import normalize_currency
 from ui.change_cell import add_period_actions, change_header, change_item
 from ui.formatting import format_price
+from ui.image_cache import THUMB_SIZE, ImageLoader, thumbnail_label
 from ui.logos import _domain_key, logo_pixmap
 from ui.theme import STOP_BUTTON_QSS, link_color
 
-(_COL_LOGO, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_CHANGE, _COL_QTY, _COL_TOTAL,
- _COL_REFRESH, _COL_GRAPH, _COL_EDIT, _COL_REMOVE, _COL_DELETE) = range(12)
+(_COL_LOGO, _COL_IMAGE, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_CHANGE, _COL_QTY,
+ _COL_TOTAL, _COL_REFRESH, _COL_GRAPH, _COL_EDIT, _COL_REMOVE, _COL_DELETE) = range(13)
 _UP_COLOR = "#cc3b3b"    # price rose (buyer's view)
 _DOWN_COLOR = "#2e9e44"  # price fell
 
@@ -42,7 +43,8 @@ def _site_name(url: str) -> str:
 
 class CartDialog(QDialog):
     def __init__(self, parent=None, on_changed=None, on_refresh=None, on_edit=None,
-                 on_refresh_many=None, on_stop=None, on_graph=None, on_period=None):
+                 on_refresh_many=None, on_stop=None, on_graph=None, on_period=None,
+                 images=None):
         super().__init__(parent)
         self._on_changed = on_changed  # called after a delete so the caller refreshes
         self._on_refresh = on_refresh  # re-scrape one product (main window handler)
@@ -51,10 +53,13 @@ class CartDialog(QDialog):
         self._on_stop = on_stop        # stop the running refresh (main window)
         self._on_graph = on_graph      # open a product's price graph (main window)
         self._on_period = on_period    # change the Change column's period (main window)
+        # Product thumbnails: share the main window's loader (already-loaded
+        # images show instantly), or use our own when opened standalone.
+        self._images = images if images is not None else ImageLoader(self)
         self._refreshing = False       # pushed by the main window (set_refresh_state)
         self.products = []
         self.setWindowTitle("Shopping cart")
-        self.resize(1270, 560)
+        self.resize(1330, 580)
         layout = QVBoxLayout(self)
 
         self._intro = QLabel()
@@ -62,17 +67,18 @@ class CartDialog(QDialog):
         self._intro.setTextFormat(Qt.TextFormat.RichText)
         layout.addWidget(self._intro)
 
-        self.table = QTableWidget(0, 12)
+        self.table = QTableWidget(0, 13)
         self.table.setHorizontalHeaderLabels(
-            ["", "Product", "Site", "Unit price", self._change_header_text(), "Qty", "Line total", "", "", "", "", ""]
+            ["", "", "Product", "Site", "Unit price", self._change_header_text(), "Qty", "Line total", "", "", "", "", ""]
         )
         self.table.verticalHeader().setVisible(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.table.verticalHeader().setDefaultSectionSize(46)
+        self.table.verticalHeader().setDefaultSectionSize(max(46, THUMB_SIZE + 10))
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(_COL_NAME, QHeaderView.ResizeMode.Stretch)
         self.table.setColumnWidth(_COL_LOGO, 76)
+        self.table.setColumnWidth(_COL_IMAGE, THUMB_SIZE + 16)
         self.table.setColumnWidth(_COL_SITE, 110)
         self.table.setColumnWidth(_COL_PRICE, 120)
         self.table.setColumnWidth(_COL_CHANGE, 90)
@@ -153,6 +159,7 @@ class CartDialog(QDialog):
         if pm is not None:
             logo.setPixmap(pm)
         self.table.setCellWidget(row, _COL_LOGO, logo)
+        self.table.setCellWidget(row, _COL_IMAGE, thumbnail_label(self._images, product))
 
         name_item = QTableWidgetItem(product.name or product.url)
         name_item.setData(Qt.ItemDataRole.UserRole, product.url)

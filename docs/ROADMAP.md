@@ -567,6 +567,17 @@ them). Tooltips say which base was used ("N ago: …" vs "Since tracking began
 (local: one SQL query; cloud: products with an embedded, ordered, limit-1
 `price_history` — no new SQL function).
 
+**v0.21.4:** product **thumbnails** in the group view and the cart (a column after
+the store logo; shared `thumbnail_label` helper in
+[ui/image_cache.py](../ui/image_cache.py)). Both reuse the main window's
+`ImageLoader`, so images it already loaded show instantly and nothing downloads
+twice; a group view opened from Manage groups uses its own loader (disk cache).
+And a **List** column on the main table, after Product: which groups each product
+is in (comma-separated, empty if none; tooltip with the full list; sortable,
+ungrouped last). One batched `repo.group_names_by_product()` per reload (local: one
+join; cloud: groups + memberships, two requests); right-click group changes and
+closing the notifications window reload it. Header state key → `header_state_v10`.
+
 ---
 
 ## Upcoming

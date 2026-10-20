@@ -405,6 +405,21 @@ def groups_for_product(product_id: int) -> List[Group]:
         return list(session.scalars(stmt))
 
 
+def group_names_by_product() -> dict:
+    """{product_id: [group name, …]} for every product in at least one group,
+    in group creation order. One query — feeds the main table's List column."""
+    with session_scope() as session:
+        stmt = (
+            select(GroupMember.product_id, Group.name)
+            .join(Group, Group.id == GroupMember.group_id)
+            .order_by(Group.created_at, Group.id)
+        )
+        result: dict = {}
+        for product_id, name in session.execute(stmt):
+            result.setdefault(product_id, []).append(name)
+        return result
+
+
 # --- shopping cart (Phase 38) ---------------------------------------------
 
 def add_to_cart(product_id: int, quantity: int = 1, user_id: Optional[int] = None) -> bool:

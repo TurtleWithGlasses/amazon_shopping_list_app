@@ -540,6 +540,32 @@ def groups_for_product(product_id) -> List[CloudGroup]:
     return [CloudGroup(id=r["id"], name=r["name"]) for r in rows]
 
 
+@_resilient
+def group_names_by_product() -> dict:
+    """{product_id: [group name, …]} for every product in at least one group,
+    in group creation order. Two requests (groups + memberships; RLS scopes
+    both to the user) — feeds the main table's List column."""
+    client = get_client()
+    groups = client.table("groups").select("id,name").order("created_at").execute().data or []
+    order = {g["id"]: i for i, g in enumerate(groups)}
+    names = {g["id"]: g["name"] for g in groups}
+    pairs = []
+    size, start = 1000, 0
+    while True:
+        rows = (client.table("group_members").select("group_id,product_id")
+                .order("id").range(start, start + size - 1).execute().data) or []
+        pairs.extend(rows)
+        if len(rows) < size:
+            break
+        start += size
+    pairs.sort(key=lambda r: order.get(r["group_id"], len(order)))
+    result: dict = {}
+    for r in pairs:
+        if r["group_id"] in names:
+            result.setdefault(r["product_id"], []).append(names[r["group_id"]])
+    return result
+
+
 # --- shopping cart (Phase 38) ---------------------------------------------
 
 @_resilient
