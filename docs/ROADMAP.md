@@ -578,6 +578,22 @@ ungrouped last). One batched `repo.group_names_by_product()` per reload (local: 
 join; cloud: groups + memberships, two requests); right-click group changes and
 closing the notifications window reload it. Header state key → `header_state_v10`.
 
+**v0.21.5:**
+- **Fast startup.** The main window shows immediately with "Loading data…"; a
+  worker ([ui/startup_loader.py](../ui/startup_loader.py)) fetches the products
+  first (rows appear), then trends, Change base prices, first prices and group
+  names (columns fill in). Add / Refresh All / sorting / groups / cart wait with a
+  "Still loading…" note; timers skip quietly. A failed load shows "Couldn't load
+  data — retrying…" and retries with back-off (3 s → 30 s).
+- **UI state remembered** ([ui/ui_state.py](../ui/ui_state.py)): product graph
+  (timescale, size), group view (timescale, size, table/graph split, column
+  widths), cart (size, column widths), export timescale, and the size of Manage
+  groups / Settings / the startup report — on top of what the main window and
+  notifications already saved.
+- **List dropdown** left of Add Product: "No list", each group, or "New list…";
+  a newly added product goes straight into the chosen group. Items refresh when
+  it opens, the choice is remembered, and a deleted group falls back to "No list".
+
 ---
 
 ## Upcoming

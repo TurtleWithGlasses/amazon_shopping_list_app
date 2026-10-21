@@ -8,6 +8,7 @@ from PySide6.QtWidgets import QComboBox, QDialog, QHBoxLayout, QLabel, QVBoxLayo
 from core import datastore as repo
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS, since_for
 from ui.graph_style import HOVER_COLOR, style_plot
+from ui.ui_state import remember_combo_text, restore_geometry, save_geometry
 
 
 class GraphDialog(QDialog):
@@ -16,6 +17,7 @@ class GraphDialog(QDialog):
         self.product = product
         self.setWindowTitle(f"Price history — {product.name or product.url}")
         self.resize(760, 440)
+        restore_geometry(self, "graph")  # last size / position
 
         layout = QVBoxLayout(self)
 
@@ -23,7 +25,7 @@ class GraphDialog(QDialog):
         controls.addWidget(QLabel("Timescale:"))
         self.timescale = QComboBox()
         self.timescale.addItems(TIMESCALE_LABELS)
-        self.timescale.setCurrentText(DEFAULT_TIMESCALE)
+        remember_combo_text(self.timescale, "graph/timescale", DEFAULT_TIMESCALE)
         controls.addWidget(self.timescale)
         controls.addStretch(1)
         layout.addLayout(controls)
@@ -99,3 +101,7 @@ class GraphDialog(QDialog):
                 tip += f"\n{arrow} {delta:+,.2f} {cur}".rstrip()
             tips.append(tip)
         self._add_hover_points(kx, ky, tips)
+
+    def done(self, result) -> None:
+        save_geometry(self, "graph")
+        super().done(result)

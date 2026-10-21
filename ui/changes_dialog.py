@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QVBoxLayout,
 )
+from ui.ui_state import restore_geometry, save_geometry
 
 
 class StartupChangesDialog(QDialog):
@@ -20,6 +21,7 @@ class StartupChangesDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Changes since last session")
         self.resize(680, 380)
+        restore_geometry(self, "startup_changes")  # last size / position
 
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel(
@@ -49,3 +51,7 @@ class StartupChangesDialog(QDialog):
         close_button = QPushButton("Close")
         close_button.clicked.connect(self.accept)
         layout.addWidget(close_button)
+
+    def done(self, result) -> None:
+        save_geometry(self, "startup_changes")
+        super().done(result)

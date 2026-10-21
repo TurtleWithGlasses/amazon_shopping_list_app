@@ -31,6 +31,7 @@ from ui.graph_style import LINE_COLORS, style_plot
 from ui.image_cache import THUMB_SIZE, ImageLoader, thumbnail_label
 from ui.logos import _domain_key, logo_pixmap
 from ui.theme import STOP_BUTTON_QSS, link_color
+from ui import ui_state
 
 _CHEAPEST = QColor("#2e9e44")  # green: the lowest-priced member
 
@@ -61,9 +62,13 @@ class GroupViewDialog(QDialog):
         self._images = images if images is not None else ImageLoader(self)
         self._refresh_state = (False, "")  # (refreshing, "done/total"), pushed by main
         self.refresh_button = None
-        self._timescale = DEFAULT_TIMESCALE  # graph window; kept across rebuilds
+        # graph window; remembered between sessions and kept across rebuilds
+        self._timescale = ui_state.value("group_view/timescale", DEFAULT_TIMESCALE)
+        if self._timescale not in TIMESCALE_LABELS:
+            self._timescale = DEFAULT_TIMESCALE
         self.setWindowTitle(f"Group — {group_name}")
         self.resize(920, 680)
+        ui_state.restore_geometry(self, "group_view")  # last size / position
         self._layout = QVBoxLayout(self)
         self._populate()
 
@@ -119,6 +124,7 @@ class GroupViewDialog(QDialog):
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
         splitter.setSizes([230, 380])
+        ui_state.remember_splitter(splitter, "group_view")  # table / graph split
         self._layout.addWidget(splitter, 1)
 
     @staticmethod
@@ -220,6 +226,7 @@ class GroupViewDialog(QDialog):
             low_item = QTableWidgetItem(format_price(low, product.currency) if low is not None else "—")
             low_item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
             table.setItem(row, _COL_LOW, low_item)
+        ui_state.remember_header(table.horizontalHeader(), "group_view")  # column widths
         return table
 
     # --- Change period (shared with the main table and cart) ------------------
@@ -360,6 +367,7 @@ class GroupViewDialog(QDialog):
 
     def _on_timescale_changed(self, label: str) -> None:
         self._timescale = label
+        ui_state.set_value("group_view/timescale", label)
         old = self._graph
         self._graph = self._build_graph()
         self._graph_box.replaceWidget(old, self._graph)
@@ -405,3 +413,7 @@ class GroupViewDialog(QDialog):
         empty = QLabel("No price history for this timescale yet.")
         empty.setAlignment(Qt.AlignmentFlag.AlignCenter)
         return empty
+
+    def done(self, result) -> None:
+        ui_state.save_geometry(self, "group_view")
+        super().done(result)

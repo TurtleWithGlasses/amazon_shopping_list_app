@@ -26,6 +26,7 @@ from services import export as export_service
 from services import telegram as tg
 from services.timescales import DEFAULT_TIMESCALE, TIMESCALE_LABELS
 from ui.theme import DEFAULT_THEME, THEME_CHOICES, apply_theme, user_font_size
+from ui.ui_state import restore_geometry, save_geometry
 
 
 class SettingsDialog(QDialog):
@@ -33,6 +34,7 @@ class SettingsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Settings")
         self.resize(560, 640)
+        restore_geometry(self, "settings")  # last size / position
         outer = QVBoxLayout(self)
 
         content = QWidget()
@@ -286,3 +288,7 @@ class SettingsDialog(QDialog):
             QMessageBox.critical(self, "Export failed", str(exc))
             return
         QMessageBox.information(self, "Exported", f"Exported {rows} row(s) to {path}")
+
+    def done(self, result) -> None:
+        save_geometry(self, "settings")
+        super().done(result)

@@ -23,6 +23,7 @@ from PySide6.QtWidgets import (
     QMenu,
     QMessageBox,
     QPushButton,
+    QStackedWidget,
     QStyle,
     QSystemTrayIcon,
     QTableWidget,
@@ -67,6 +68,7 @@ from ui.image_cache import ImageLoader
 from ui.logos import logo_key, logo_pixmap
 from ui.notifications import TrayChannel
 from ui.settings_dialog import SettingsDialog
+from ui.startup_loader import StartupLoadTask
 from ui.formatting import format_price
 from ui.theme import STOP_BUTTON_QSS, link_color
 
@@ -114,6 +116,22 @@ SNAPSHOT_INTERVAL_MS = int(os.environ.get("PRICETRACKER_SNAPSHOT_MS", 60 * 60 * 
 # up by mistake) and held until a second consecutive scan confirms it.
 SUSPECT_JUMP_FACTOR = 2.5
 
+class _ListCombo(QComboBox):
+    """The add bar's List dropdown: rebuilds its items right before opening, so
+    groups created / renamed / deleted elsewhere always show up."""
+
+    def __init__(self, on_about_to_show, parent=None):
+        super().__init__(parent)
+        self._on_about_to_show = on_about_to_show
+
+    def showPopup(self) -> None:
+        self._on_about_to_show()
+        super().showPopup()
+
+
+_NEW_LIST = "__new__"  # List dropdown item data: create a group
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -135,6 +153,14 @@ class MainWindow(QMainWindow):
         self._single_active = set()    # ids with a single-row refresh in flight
         self._trend_cache = {}         # product id -> (state, pct) over the window
         self._group_names = {}         # product id -> [group names] (List column)
+        self._loaded = False           # startup data in? (actions wait until then)
+        self._last_products = []       # the list the table was last built from
+        self._load_task = None
+        self._load_retry_ms = 3000
+        # Owned by the window, so a pending retry dies with it (e.g. on logout).
+        self._load_retry_timer = QTimer(self)
+        self._load_retry_timer.setSingleShot(True)
+        self._load_retry_timer.timeout.connect(self._start_initial_load)
         self._really_quit = False
         self.logout_requested = False
         self._tray_available = False
@@ -172,9 +198,9 @@ class MainWindow(QMainWindow):
         self._build_central()
         self._build_tray()
         self._restore_layout()
-        self._recompute_trends()  # fill the trend cache before the first render
-        self._recompute_period_prices()  # …and the Change column's past prices
-        self.reload()
+        # Don't block the first paint on the database: the window shows right
+        # away with "Loading data…", and the data arrives from a worker thread.
+        self._start_initial_load()
         self._update_bell()  # reflect any unread notifications persisted last session
         self._start_timers()
 
@@ -234,6 +260,12 @@ class MainWindow(QMainWindow):
         self.url_input = QLineEdit()
         self.url_input.setPlaceholderText("Paste an Amazon product URL…")
         self.url_input.returnPressed.connect(self._add_product)
+        # Which group (list) a newly added product goes into; remembered.
+        self.list_combo = _ListCombo(self._reload_list_combo)
+        self.list_combo.setToolTip("Add the new product to this list (group)")
+        self.list_combo.setMinimumContentsLength(12)
+        self.list_combo.addItem("No list", None)
+        self.list_combo.activated.connect(self._on_list_chosen)
         self.add_button = QPushButton("Add Product")
         self.add_button.setObjectName("primary")  # M3 filled primary button
         self.add_button.clicked.connect(self._add_product)
@@ -250,6 +282,8 @@ class MainWindow(QMainWindow):
         self.bell_button.setToolTip("Notifications — recent price / stock changes")
         self.bell_button.clicked.connect(self._open_notifications)
         add_bar.addWidget(self.url_input, 1)
+        add_bar.addWidget(QLabel("List:"))
+        add_bar.addWidget(self.list_combo)
         add_bar.addWidget(self.add_button)
         add_bar.addWidget(self.refresh_button)
         add_bar.addWidget(QLabel("Auto-refresh:"))
@@ -289,7 +323,14 @@ class MainWindow(QMainWindow):
         # Widget cells (arrows/logo/image/status/actions) don't paint the row
         # selection brush like plain item cells do; tint them to match.
         self.table.itemSelectionChanged.connect(self._on_selection_changed)
-        layout.addWidget(self.table)
+        self._loading_label = QLabel("Loading data…")
+        self._loading_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        font = self._loading_label.font(); font.setPointSize(font.pointSize() + 3)
+        self._loading_label.setFont(font)
+        self._table_stack = QStackedWidget()
+        self._table_stack.addWidget(self.table)
+        self._table_stack.addWidget(self._loading_label)
+        layout.addWidget(self._table_stack)
 
         self.setCentralWidget(central)
 
@@ -329,12 +370,17 @@ class MainWindow(QMainWindow):
             first = None  # keep the previous first-price cache
         set_base_prices(prices, first)
 
-    def reload(self) -> None:
+    def reload(self, products=None) -> None:
+        """Rebuild the table. With `products`, render that list as-is (used by the
+        background startup load); otherwise query the store."""
         # Preserve the scroll position: rebuilding the table resets the
         # scrollbar to the top, which yanks the view up after Add/refresh/move.
         scroll = self.table.verticalScrollBar().value()
-        self._load_group_names()  # before sorting: the List column can be the sort key
-        products = self._sort_products(repo.list_products())
+        if products is None:
+            self._load_group_names()  # before sorting: the List column can be the sort key
+            products = repo.list_products()
+        self._last_products = products
+        products = self._sort_products(products)
         self.table.setRowCount(0)
         self._status_cells = {}
         self._row_refresh_buttons = {}
@@ -346,6 +392,110 @@ class MainWindow(QMainWindow):
         self.table.verticalScrollBar().setValue(scroll)
         QTimer.singleShot(0, lambda: self.table.verticalScrollBar().setValue(scroll))
         self.statusBar().showMessage(f"{len(products)} product(s) tracked")
+
+    # --- background startup load --------------------------------------------
+
+    def _start_initial_load(self) -> None:
+        self._table_stack.setCurrentWidget(self._loading_label)
+        self.statusBar().showMessage("Loading…")
+        self._update_loading_controls()
+        task = StartupLoadTask()
+        task.signals.products.connect(self._on_initial_products)
+        task.signals.extras.connect(self._on_initial_extras)
+        task.signals.failed.connect(self._on_initial_load_failed)
+        self._load_task = task  # keep the signals object alive
+        self._pool.start(task)
+
+    def _on_initial_products(self, products) -> None:
+        """Step 1: the product list is in — show the rows now (Change / Trend /
+        List fill in when the extras arrive)."""
+        self._load_retry_ms = 3000
+        self._loading_label.setText("Loading data…")
+        self._loading_label.setToolTip("")
+        self.reload(products=products)
+        self._table_stack.setCurrentWidget(self.table)
+        self.statusBar().showMessage(f"{len(products)} product(s) — loading prices…")
+
+    def _on_initial_extras(self, extras) -> None:
+        """Step 2: trends, past prices and group names are in — re-render the rows
+        from the list already shown, then unlock the actions."""
+        if "trend_cache" in extras:
+            self._trend_cache = extras["trend_cache"]
+        if "period_prices" in extras or "first_prices" in extras:
+            set_base_prices(extras.get("period_prices", {}), extras.get("first_prices"))
+        if "group_names" in extras:
+            self._group_names = extras["group_names"]
+        if "groups" in extras:
+            self._fill_list_combo(extras["groups"])
+        self._loaded = True
+        self._load_task = None
+        self.reload(products=self._last_products)
+        self._update_loading_controls()
+
+    def _on_initial_load_failed(self, message) -> None:
+        """Couldn't reach the store: say so and retry (backing off to 30 s)."""
+        self._load_task = None
+        self._loading_label.setText("Couldn't load data — retrying…")
+        self._loading_label.setToolTip(message)
+        self.statusBar().showMessage(f"Couldn't load data — retrying… ({message})")
+        self._load_retry_timer.start(self._load_retry_ms)
+        self._load_retry_ms = min(self._load_retry_ms * 2, 30000)
+
+    def _update_loading_controls(self) -> None:
+        """Add / Refresh All stay disabled until the startup data is in."""
+        self.add_button.setEnabled(self._loaded)
+        self.url_input.setEnabled(self._loaded)
+        self.list_combo.setEnabled(self._loaded)
+        self._update_refresh_ui()
+
+    def _ready(self, quiet: bool = False) -> bool:
+        """False (with a short note) while the startup data is still loading."""
+        if not self._loaded and not quiet:
+            self.statusBar().showMessage("Still loading data — one moment…", 3000)
+        return self._loaded
+
+    # --- List dropdown (which group a new product goes into) -------------------
+
+    def _fill_list_combo(self, groups) -> None:
+        """Rebuild the items from [(id, name)], keeping the current choice (or the
+        saved one on first fill); falls back to "No list" if it was deleted."""
+        current = self.list_combo.currentData()
+        if current is None and self.list_combo.count() <= 1:
+            saved = self._settings.value("add_to_list_id")
+            current = int(saved) if saved not in (None, "", "None") else None
+        self.list_combo.blockSignals(True)
+        self.list_combo.clear()
+        self.list_combo.addItem("No list", None)
+        for group_id, name in groups:
+            self.list_combo.addItem(name, group_id)
+        self.list_combo.insertSeparator(self.list_combo.count())
+        self.list_combo.addItem("New list…", _NEW_LIST)
+        index = self.list_combo.findData(current) if current is not None else 0
+        self.list_combo.setCurrentIndex(max(index, 0))
+        self.list_combo.blockSignals(False)
+
+    def _reload_list_combo(self) -> None:
+        try:
+            groups = [(g.id, g.name) for g in repo.list_groups()]
+        except Exception:
+            return  # keep the items we have
+        self._fill_list_combo(groups)
+
+    def _on_list_chosen(self, index: int) -> None:
+        data = self.list_combo.itemData(index)
+        if data == _NEW_LIST:
+            name, ok = QInputDialog.getText(self, "New list", "List name:")
+            if ok and name.strip():
+                group = repo.create_group(name.strip())
+                self._reload_list_combo()
+                self.list_combo.setCurrentIndex(self.list_combo.findData(group.id))
+            else:  # cancelled: back to the previous choice
+                saved = self._settings.value("add_to_list_id")
+                prev = int(saved) if saved not in (None, "", "None") else None
+                index = self.list_combo.findData(prev) if prev is not None else 0
+                self.list_combo.setCurrentIndex(max(index, 0))
+        chosen = self.list_combo.currentData()
+        self._settings.setValue("add_to_list_id", "" if chosen in (None, _NEW_LIST) else chosen)
 
     def _load_group_names(self) -> None:
         """One batched query for the List column (which groups each product is in)."""
@@ -388,6 +538,8 @@ class MainWindow(QMainWindow):
         return [p for _, p in present] + missing  # missing values always last
 
     def _on_header_clicked(self, col: int) -> None:
+        if not self._ready():
+            return  # sorting needs the trend / price / group data
         if col == COL_CHANGE:
             self._show_change_menu()  # pick the period / sort from a menu
             return
@@ -727,6 +879,8 @@ class MainWindow(QMainWindow):
         return f"{host}{parsed.path.rstrip('/')}"
 
     def _add_product(self) -> None:
+        if not self._ready():
+            return
         url = self.url_input.text().strip()
         if not url:
             QMessageBox.information(self, "Add product", "Please paste a product URL.")
@@ -754,6 +908,8 @@ class MainWindow(QMainWindow):
             )
             return
         self.add_button.setEnabled(False)
+        target = self.list_combo.currentData()
+        self._add_target_group = target if isinstance(target, int) else None
         self.statusBar().showMessage("Fetching product…")
         self._start_task(url, key="__add__", on_finished=self._on_added, cancellable=False)
 
@@ -765,12 +921,22 @@ class MainWindow(QMainWindow):
             return
         product = repo.add_product(data.url, data.name, data.price, data.currency,
                                    data.stock, image_url=data.image_url)
+        list_name = None
+        group_id = getattr(self, "_add_target_group", None)
+        if group_id is not None:
+            try:
+                repo.add_to_group(group_id, product.id)  # no-op if already a member
+                list_name = self.list_combo.itemText(self.list_combo.findData(group_id))
+            except Exception as exc:
+                QMessageBox.warning(self, "Add to list",
+                                    f"The product was added, but not to the list:\n{exc}")
         self.url_input.clear()
         self.reload()
+        suffix = f" → {list_name}" if list_name else ""
         if getattr(product, "revived", False):
-            self.statusBar().showMessage(f"Restored: {data.name} — price history reattached")
+            self.statusBar().showMessage(f"Restored: {data.name} — price history reattached{suffix}")
         else:
-            self.statusBar().showMessage(f"Added: {data.name}")
+            self.statusBar().showMessage(f"Added: {data.name}{suffix}")
 
     def _refresh_all(self) -> None:
         """Manual refresh: re-scrape all, log a history point, and notify
@@ -839,6 +1005,8 @@ class MainWindow(QMainWindow):
 
     def _auto_refresh(self) -> None:
         """5-minute timer: re-scrape all, update display, notify on changes."""
+        if not self._ready(quiet=True):
+            return  # next tick will do it
         self._run_refresh(snapshot=False, notify=True, title="Price / stock changed")
 
     def _startup_check(self) -> None:
@@ -1247,6 +1415,8 @@ class MainWindow(QMainWindow):
     def _take_snapshot(self) -> None:
         """Hourly timer: log current price/stock to history without re-scraping."""
         self._persist_session()  # keep the saved token fresh as it rotates
+        if not self._ready(quiet=True):
+            return
         products = repo.list_products()
         for product in products:
             repo.record_price_snapshot(
@@ -1298,13 +1468,13 @@ class MainWindow(QMainWindow):
     def _on_refresh_button(self) -> None:
         if self._is_refreshing():
             self._stop_refresh()
-        else:
+        elif self._ready():
             self._refresh_all()
 
     def _update_refresh_ui(self) -> None:
         """Refresh All turns into a red Stop while any refresh is running."""
         refreshing = self._is_refreshing()
-        self.refresh_button.setEnabled(True)
+        self.refresh_button.setEnabled(refreshing or self._loaded)
         self.refresh_button.setText("Stop" if refreshing else "Refresh All")
         self.refresh_button.setToolTip(
             "Stop the refresh (results already fetched are kept)" if refreshing
@@ -1616,6 +1786,8 @@ class MainWindow(QMainWindow):
         self._groups_menu.addAction("Manage groups…", self._open_groups)
 
     def _open_group(self, group_id, group_name) -> None:
+        if not self._ready():
+            return
         from ui.group_view_dialog import GroupViewDialog
         self._group_dialog = GroupViewDialog(
             group_id, group_name, parent=self,
@@ -1638,6 +1810,8 @@ class MainWindow(QMainWindow):
             dialog.reload_view()
 
     def _open_groups(self) -> None:
+        if not self._ready():
+            return
         from ui.groups_dialog import GroupsDialog
         GroupsDialog(self).exec()
         self.reload()  # a group view opened from here may have deleted products
@@ -1653,6 +1827,8 @@ class MainWindow(QMainWindow):
         clear.setEnabled(count > 0)
 
     def _open_cart(self) -> None:
+        if not self._ready():
+            return
         from ui.cart_dialog import CartDialog
         self._cart_dialog = CartDialog(
             self, on_changed=self.reload, on_refresh=self._refresh_one,
@@ -1675,6 +1851,8 @@ class MainWindow(QMainWindow):
             dialog.reload_prices()
 
     def _clear_cart(self) -> None:
+        if not self._ready():
+            return
         confirm = QMessageBox.question(
             self, "Clear cart",
             "Remove all items from the cart? The products themselves stay tracked.",
@@ -1858,12 +2036,16 @@ class MainWindow(QMainWindow):
             QMessageBox.information(self, "Export", "There are no products to export.")
             return
 
+        last = self._settings.value("export/timescale", DEFAULT_TIMESCALE)
+        if last not in TIMESCALE_LABELS:
+            last = DEFAULT_TIMESCALE
         timescale, ok = QInputDialog.getItem(
             self, "Export timescale", "Include history from:",
-            TIMESCALE_LABELS, TIMESCALE_LABELS.index(DEFAULT_TIMESCALE), False,
+            TIMESCALE_LABELS, TIMESCALE_LABELS.index(last), False,
         )
         if not ok:
             return
+        self._settings.setValue("export/timescale", timescale)  # preselect next time
 
         if fmt == "xlsx":
             filt, default = "Excel files (*.xlsx)", "price_history.xlsx"

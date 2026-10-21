@@ -30,6 +30,7 @@ from ui.formatting import format_price
 from ui.image_cache import THUMB_SIZE, ImageLoader, thumbnail_label
 from ui.logos import _domain_key, logo_pixmap
 from ui.theme import STOP_BUTTON_QSS, link_color
+from ui.ui_state import remember_header, restore_geometry, save_geometry
 
 (_COL_LOGO, _COL_IMAGE, _COL_NAME, _COL_SITE, _COL_PRICE, _COL_CHANGE, _COL_QTY,
  _COL_TOTAL, _COL_REFRESH, _COL_GRAPH, _COL_EDIT, _COL_REMOVE, _COL_DELETE) = range(13)
@@ -60,6 +61,7 @@ class CartDialog(QDialog):
         self.products = []
         self.setWindowTitle("Shopping cart")
         self.resize(1330, 580)
+        restore_geometry(self, "cart")  # last size / position
         layout = QVBoxLayout(self)
 
         self._intro = QLabel()
@@ -90,6 +92,7 @@ class CartDialog(QDialog):
         self.table.setColumnWidth(_COL_REMOVE, 90)
         self.table.setColumnWidth(_COL_DELETE, 90)
         self.table.cellClicked.connect(self._open_link)
+        remember_header(self.table.horizontalHeader(), "cart")  # column widths
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
         layout.addWidget(self.table, 1)
 
@@ -371,3 +374,7 @@ class CartDialog(QDialog):
         url = item.data(Qt.ItemDataRole.UserRole) if item else None
         if url:
             QDesktopServices.openUrl(QUrl(url))
+
+    def done(self, result) -> None:
+        save_geometry(self, "cart")
+        super().done(result)

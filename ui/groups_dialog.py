@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 from core import datastore as repo
 from ui.group_view_dialog import GroupViewDialog
+from ui.ui_state import restore_geometry, save_geometry
 
 
 class GroupsDialog(QDialog):
@@ -21,6 +22,7 @@ class GroupsDialog(QDialog):
         super().__init__(parent)
         self.setWindowTitle("Groups")
         self.resize(400, 440)
+        restore_geometry(self, "groups")  # last size / position
         layout = QVBoxLayout(self)
         layout.addWidget(QLabel("Comparison groups — double-click to open."))
 
@@ -90,3 +92,7 @@ class GroupsDialog(QDialog):
         GroupViewDialog(group_id, group_name, parent=self, on_changed=on_changed,
                         on_refresh=on_refresh, on_edit=on_edit).exec()
         self._reload()  # member counts may have changed
+
+    def done(self, result) -> None:
+        save_geometry(self, "groups")
+        super().done(result)
